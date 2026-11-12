@@ -18,13 +18,13 @@ const path = require('path');
 const Font = require('../simulator/js/core/font.js');
 
 const PARAM = {
-  W: 70, H: 125, corner: 4,           // contorno (mm) - ESTIMADO
+  W: 70, H: 100, corner: 4,           // contorno (mm) - ESTIMADO; so a area das teclas (a tela fica fora, ligada por cabo)
   edge: 0.3,                          // folga minima ate a borda
   trace: 0.25, comb: 0.2, combPitch: 0.5,
   via: { pad: 0.6, drill: 0.3 },
   th: { pad: 1.6, drill: 1.0, pitch: 2.54, x0: 13.4, y: 90 },
   busTop: 84,                         // fim da area das teclas
-  version: 'v0 PRELIMINAR',
+  version: 'v1 PRELIMINAR',
 };
 const OUT = path.join(__dirname, '..', 'hardware', 'pcb', 'out');
 
@@ -168,16 +168,17 @@ function text(layer, str, x, y, h, mirror) {
   }
 }
 const rect = (layer, x, y, w, h) => poly(layer, [[x, y], [x + w, y], [x + w, y + h], [x, y + h], [x, y]], 0.15);
-rect('GTO', 6, 95, 58, 24); text('GTO', 'AREA DO DISPLAY', 14, 105.5, 1.6);
-text('GTO', 'TERMINAL MATEMATICO ' + PARAM.version, 5, 121, 1.4);
+text('GTO', 'TERMINAL MATEMATICO ' + PARAM.version, 6, 96.6, 1.2);
 ORDER.forEach((net, i) => { const lb = net === 'GND' ? 'G' : net, h = 1.05; text('GTO', lb, padX[net] - (lb.length * 6 * (h / 7)) / 2, i % 2 ? 93.6 : 91.9, h); });
 // lado de baixo (texto espelhado para ler pelo verso)
 const B = (s, x, y, h) => text('GBO', s, x, y, h, true);
-rect('GBO', 40, 96, 21, 17.8); B('XIAO ESP32S3', 59, 103.5, 1.4); B('(RESERVADO)', 58, 100.5, 1.2);
-rect('GBO', 9, 98, 18, 10.5); B('MCP23017', 25, 102.5, 1.4);
-rect('GBO', 26, 114, 18, 5); B('FPC LCD', 41, 115.8, 1.2);
-rect('GBO', 9, 111, 14, 8); B('BATERIA', 22, 114, 1.2);
-B('PRELIMINAR - MEDIDAS A CONFIRMAR', 66, 4, 1.4);
+// verso = lado dos componentes (como na placa da VovoCorp): areas reservadas, sem ilhas ainda
+rect('GBO', 8, 8, 18, 25.5); B('ESP32-S3', 24, 22, 1.4); B('MODULO', 22.5, 18.5, 1.2);
+rect('GBO', 29, 40, 12, 12); B('CAMERA', 39.5, 47, 1.2); B('(FPC)', 38, 43.5, 1.2);
+rect('GBO', 44, 10, 18, 12); B('CARREGADOR', 61, 17, 1.1); B('REGULADOR', 60, 13.5, 1.1);
+rect('GBO', 18, 95.4, 34, 3.6); B('SOLDA DO CABO DO DISPLAY', 50.5, 96.5, 1.0);
+rect('GBO', 58.5, 91.5, 9, 7); B('BAT', 66, 94.5, 1.2);
+B('PRELIMINAR - MEDIDAS A CONFIRMAR', 66, 2.2, 1.2);
 
 /* ------------------------------ verificacao de folgas ------------------------------ */
 function segDist(a, b) {
