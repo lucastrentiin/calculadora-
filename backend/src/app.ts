@@ -1,197 +1,84 @@
-/**
- * HTTP request handler (transport-agnostic: used by the HTTPS server and tests).
- *
- *  GET  /v1/health                      public, no data
- *  POST /v1/ask                         JSON {request_id, question, mode}
- *  POST /v1/image                       raw image/jpeg body; X-Request-Id, X-Mode, X-Prompt (base64 UTF-8)
- *  POST /v1/requests/:id/cancel         explicit cancellation of an in-flight request
- *
- * All /v1 endpoints except health require HMAC device authentication.
- * Bodies are never logged.
- */
+/** Composition root: builds every service and the two request handlers. */
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { AskRequest, MODES, statusResponse, toDeviceResponse, type DeviceResponse, type Mode } from './schema.ts';
-import type { DeviceAuthenticator } from './deviceAuth.ts';
-import { inspectJpeg, type RateLimiter } from './limits.ts';
-import type { AiProvider, SolveInput } from './ai/provider.ts';
-import type { Config } from './config.ts';
+import { join, resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import type { Config } from './config/index.ts';
+import { Db } from './storage/db.ts';
+import { SecretBox } from './security/crypto.ts';
+import { AccessVerifier } from './security/accessJwt.ts';
+import { Devices } from './devices/devices.ts';
+import { AdminAuth } from './auth/admin.ts';
+import { ProviderContext } from './providers/context.ts';
+import { Registry } from './providers/registry.ts';
+import { MockProvider } from './providers/mock/mock.ts';
+import { ManualProvider, SiwcProvider } from './providers/manual/manual.ts';
+import { CodexCLIProvider } from './providers/openai/codexCli.ts';
+import { OpenAIApiProvider } from './providers/openai/openaiApi.ts';
+import { ClaudeCodeProvider } from './providers/anthropic/claudeCode.ts';
+import { AnthropicApiProvider } from './providers/anthropic/anthropicApi.ts';
+import type { AIProvider } from './providers/types.ts';
+import { TaskManager } from './requests/taskManager.ts';
+import { Ota } from './ota/ota.ts';
+import { RateLimiter } from './middleware/limits.ts';
+import { HttpError, Router, clientIp, sendJson, type Ctx } from './middleware/http.ts';
+import { deviceRouter } from './api/deviceApi.ts';
+import { adminRouter } from './api/adminApi.ts';
 
-export interface Deps {
-  config: Config;
-  auth: DeviceAuthenticator;
-  limiter: RateLimiter;
-  provider: AiProvider;
-  log?: (entry: Record<string, unknown>) => void;
-  now?: () => number;
-}
+export interface AppOverrides { db?: Db; box?: SecretBox; providers?: (ctx: ProviderContext) => AIProvider[]; access?: AccessVerifier; log?: (e: Record<string, unknown>) => void }
 
-type Flight = { controller: AbortController; status: 'processing' | 'done' | 'cancelled'; at: number };
+export function createApp(cfg: Config, o: AppOverrides = {}) {
+  const db = o.db ?? Db.open(cfg.dataDir);
+  const box = o.box ?? SecretBox.load(cfg.dataDir, cfg.masterKey);
+  const access = o.access ?? (cfg.cloudflareTeamDomain ? new AccessVerifier(cfg.cloudflareTeamDomain) : undefined);
+  const devices = new Devices(db, box, cfg.clockSkewSec);
+  const admin = new AdminAuth(db, box, { sessionMinutes: db.getSetting('sessionMinutes', cfg.adminSessionMinutes), requireTotp: cfg.adminRequireTotp });
+  const pctx = new ProviderContext(cfg, db, box);
+  const providers = o.providers ? o.providers(pctx) : [
+    new MockProvider(), new CodexCLIProvider(pctx), new ClaudeCodeProvider(pctx), new AnthropicApiProvider(pctx), new OpenAIApiProvider(pctx), new ManualProvider(), new SiwcProvider(),
+  ];
+  const reg = new Registry(db, providers);
+  const tasks = new TaskManager(cfg, db, box, reg);
+  const ota = new Ota(db, cfg.dataDir);
+  const limiter = new RateLimiter(cfg.ratePerMinute, cfg.dailyQuota);
+  const enrollLimiter = new RateLimiter(5, 50);
+  const loginLimiter = new RateLimiter(10, 200);
+  const here = dirname(fileURLToPath(import.meta.url));
+  const dashboardDir = resolve(join(here, '..', '..', 'dashboard'));
+  const dev = deviceRouter({ cfg, db, devices, access, reg, tasks, ota, limiter, enrollLimiter });
+  const adm = adminRouter({ cfg, db, admin, devices, access, reg, pctx, tasks, ota, loginLimiter, box, dashboardDir });
+  const log = o.log ?? (() => {});
 
-export class HttpError extends Error {
-  status: number;
-  constructor(status: number, message: string) { super(message); this.status = status; }
-}
-
-const SEC_HEADERS: Record<string, string> = {
-  'Cache-Control': 'no-store',
-  'X-Content-Type-Options': 'nosniff',
-  'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'",
-  'Referrer-Policy': 'no-referrer',
-};
-
-function send(res: ServerResponse, status: number, body: unknown, extra: Record<string, string> = {}): void {
-  if (res.headersSent) return;
-  const json = JSON.stringify(body);
-  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': Buffer.byteLength(json), ...SEC_HEADERS, ...extra });
-  res.end(json);
-}
-
-function readBody(req: IncomingMessage, max: number): Promise<Uint8Array> {
-  return new Promise((resolve, reject) => {
-    const declared = Number(req.headers['content-length'] ?? '0');
-    if (declared > max) { reject(new HttpError(413, 'corpo grande demais')); req.resume(); return; }
-    const chunks: Buffer[] = [];
-    let size = 0;
-    req.on('data', (c: Buffer) => {
-      size += c.length;
-      if (size > max) { reject(new HttpError(413, 'corpo grande demais')); req.destroy(); return; }
-      chunks.push(c);
-    });
-    req.on('end', () => resolve(new Uint8Array(Buffer.concat(chunks))));
-    req.on('error', () => reject(new HttpError(400, 'falha na leitura')));
-  });
-}
-
-export function createHandler(deps: Deps) {
-  const { config, auth, limiter, provider } = deps;
-  const log = deps.log ?? (() => {});
-  const now = deps.now ?? (() => Date.now());
-  const flights = new Map<string, Flight>();
-
-  function gcFlights(): void {
-    const limit = now() - 10 * 60_000;
-    for (const [k, f] of flights) if (f.status !== 'processing' && f.at < limit) flights.delete(k);
-  }
-
-  async function runSolve(deviceId: string, input: SolveInput, req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const key = deviceId + ':' + input.requestId;
-    const existing = flights.get(key);
-    if (existing) throw new HttpError(409, existing.status === 'processing' ? 'requisicao ja em andamento' : 'request_id ja utilizado');
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), config.aiTimeoutMs + 5000);
-    const flight: Flight = { controller, status: 'processing', at: now() };
-    flights.set(key, flight);
-    // device dropped the connection (e.g. privacy lock): stop the upstream call too
-    res.on('close', () => { if (!res.writableFinished && flight.status === 'processing') { flight.status = 'cancelled'; controller.abort(); } });
-    let result;
-    try { result = await provider.solve(input, controller.signal); }
-    finally { clearTimeout(timer); }
-    if (flight.status === 'cancelled') { send(res, 409, { error: 'cancelado', status: 'cancelado no servidor' }); return; }
-    flight.status = 'done'; flight.at = now();
-    let body: DeviceResponse;
-    if (result.kind === 'ok') body = toDeviceResponse(input.requestId, input.mode, result.solution);
-    else if (result.kind === 'refused') body = statusResponse(input.requestId, input.mode, 'refused', result.reason);
-    else { send(res, result.status === 499 ? 409 : result.status, { error: result.error, retryable: result.retryable }); return; }
-    send(res, 200, body);
-    void req;
-  }
-
-  async function authed(req: IncomingMessage, path: string, maxBody: number): Promise<{ deviceId: string; body: Uint8Array }> {
-    const body = await readBody(req, maxBody);
-    const a = auth.verify(req.method ?? '', path, req.headers, body);
-    if (!a.ok) throw new HttpError(a.status, a.error);
-    return { deviceId: a.deviceId, body };
-  }
-
-  function rate(deviceId: string): void {
-    const r = limiter.take(deviceId);
-    if (!r.ok) { const e = new HttpError(429, r.reason ?? 'limite'); (e as HttpError & { retryAfter?: number }).retryAfter = r.retryAfter; throw e; }
-  }
-
-  return async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const started = now();
-    const url = new URL(req.url ?? '/', 'http://localhost');
-    const path = url.pathname;
-    let deviceId: string | undefined;
-    if (config.corsOrigin) {
-      res.setHeader('Access-Control-Allow-Origin', config.corsOrigin);
-      res.setHeader('Vary', 'Origin');
-      if (req.method === 'OPTIONS') {
-        res.writeHead(204, {
-          'Access-Control-Allow-Methods': 'GET, POST',
-          'Access-Control-Allow-Headers': 'Content-Type, X-Device-Id, X-Timestamp, X-Nonce, X-Signature, X-Request-Id, X-Mode, X-Prompt',
-          'Access-Control-Max-Age': '600',
-        });
-        res.end();
-        return;
-      }
-    }
-    try {
-      if (req.method === 'GET' && path === '/v1/health') { send(res, 200, { ok: true, provider: provider.name }); return; }
-
-      if (req.method === 'POST' && path === '/v1/ask') {
-        if (!String(req.headers['content-type'] ?? '').startsWith('application/json')) throw new HttpError(415, 'use application/json');
-        const a = await authed(req, path, config.maxTextBytes);
-        deviceId = a.deviceId;
-        let json: unknown;
-        try { json = JSON.parse(Buffer.from(a.body).toString('utf8')); } catch { throw new HttpError(400, 'JSON invalido'); }
-        const parsed = AskRequest.safeParse(json);
-        if (!parsed.success) throw new HttpError(400, 'campos invalidos');
-        rate(deviceId);
-        await runSolve(deviceId, { requestId: parsed.data.request_id, mode: parsed.data.mode, question: parsed.data.question }, req, res);
-        return;
-      }
-
-      if (req.method === 'POST' && path === '/v1/image') {
-        if (String(req.headers['content-type'] ?? '') !== 'image/jpeg') throw new HttpError(415, 'use image/jpeg');
-        const a = await authed(req, path, config.maxImageBytes);
-        deviceId = a.deviceId;
-        const requestId = String(req.headers['x-request-id'] ?? '');
-        const mode = String(req.headers['x-mode'] ?? '') as Mode;
-        if (!/^[A-Za-z0-9-]{8,64}$/.test(requestId) || !(MODES as readonly string[]).includes(mode)) throw new HttpError(400, 'cabecalhos invalidos');
-        let prompt = '';
-        const rawPrompt = req.headers['x-prompt'];
-        if (typeof rawPrompt === 'string' && rawPrompt) {
-          if (rawPrompt.length > 2048) throw new HttpError(400, 'prompt longo demais');
-          prompt = Buffer.from(rawPrompt, 'base64').toString('utf8');
+  function handler(via: 'tunnel' | 'lan') {
+    return async (req: IncomingMessage, res: ServerResponse) => {
+      const started = Date.now();
+      const url = new URL(req.url ?? '/', 'http://localhost');
+      const c: Ctx = { req, res, url, path: url.pathname, params: {}, via, ip: clientIp(req, via) };
+      try {
+        if (cfg.corsOrigin && url.pathname.startsWith('/api/')) {
+          res.setHeader('Access-Control-Allow-Origin', cfg.corsOrigin);
+          res.setHeader('Vary', 'Origin');
+          if (req.method === 'OPTIONS') {
+            res.writeHead(204, { 'Access-Control-Allow-Methods': 'GET, POST', 'Access-Control-Allow-Headers': 'Content-Type, X-Device-Id, X-Timestamp, X-Nonce, X-Signature, X-Protocol, X-Request-Id, X-Mode, X-Provider, X-Session-Id, X-Prompt, X-Firmware', 'Access-Control-Max-Age': '600' });
+            res.end();
+            return;
+          }
         }
-        const info = inspectJpeg(a.body);
-        if (!info.ok) throw new HttpError(415, info.error);
-        if (info.width > config.maxImageDim || info.height > config.maxImageDim) throw new HttpError(413, 'resolucao acima do limite');
-        rate(deviceId);
-        await runSolve(deviceId, { requestId, mode, image: { data: a.body, mediaType: 'image/jpeg' }, prompt }, req, res);
-        return;
+        const router: Router = url.pathname.startsWith('/admin') ? adm : dev;
+        const m = router.match(req.method ?? 'GET', url.pathname);
+        if (!m) throw new HttpError(404, 'not_found', 'nao encontrado');
+        c.params = m.params;
+        await m.h(c);
+      } catch (e) {
+        if (e instanceof HttpError) sendJson(res, e.status, { protocol: 'mt1', error: { code: e.code, message: e.message } }, e.retryAfter ? { 'Retry-After': String(e.retryAfter) } : {});
+        else { sendJson(res, 500, { protocol: 'mt1', error: { code: 'internal', message: 'erro interno' } }); log({ level: 'error', msg: (e as Error).message }); }
+      } finally {
+        // never log bodies, questions, tokens or query strings
+        log({ t: new Date(started).toISOString(), via, method: req.method, path: url.pathname.replace(/\/requests\/[^/]+/, '/requests/:id').replace(/\/(devices|manual)\/[^/]+/, '/$1/:id'), status: res.statusCode, ms: Date.now() - started });
       }
+    };
+  }
 
-      const m = path.match(/^\/v1\/requests\/([A-Za-z0-9-]{8,64})\/cancel$/);
-      if (req.method === 'POST' && m) {
-        const a = await authed(req, path, 0);
-        deviceId = a.deviceId;
-        gcFlights();
-        const f = flights.get(deviceId + ':' + m[1]);
-        if (!f) { send(res, 200, { status: 'desconhecido no servidor' }); return; }
-        if (f.status === 'processing') {
-          f.status = 'cancelled'; f.at = now(); f.controller.abort();
-          // the AI provider may already have received the prompt; only the result is discarded
-          send(res, 200, { status: 'cancelado no servidor' });
-          return;
-        }
-        send(res, 200, { status: f.status === 'done' ? 'ja concluido no servidor' : 'cancelado no servidor' });
-        return;
-      }
-
-      throw new HttpError(404, 'nao encontrado');
-    } catch (err) {
-      if (err instanceof HttpError) {
-        const extra: Record<string, string> = {};
-        const ra = (err as HttpError & { retryAfter?: number }).retryAfter;
-        if (ra) extra['Retry-After'] = String(ra);
-        send(res, err.status, { error: err.message }, extra);
-      } else {
-        send(res, 500, { error: 'erro interno' });
-      }
-    } finally {
-      log({ t: new Date(started).toISOString(), method: req.method, path: path.replace(/\/v1\/requests\/[^/]+/, '/v1/requests/:id'), device: deviceId, status: res.statusCode, ms: now() - started });
-    }
-  };
+  const timer = setInterval(() => tasks.purge(), 3600_000);
+  timer.unref();
+  return { db, box, devices, admin, reg, tasks, ota, pctx, tunnelHandler: handler('tunnel'), lanHandler: handler('lan'), close: () => { clearInterval(timer); db.close(); } };
 }
