@@ -1,37 +1,42 @@
-# Provisionamento seguro
+# Provisionamento
 
-## 1. Identidade do dispositivo no backend
+## 1. Identidade do terminal no servidor
 
 ```bash
-cd backend && npm run provision -- dev-001 "unidade 1"
-# device_id : dev-001
-# device_key: <base64 de 32 bytes>   (exibida uma única vez)
+sudo /opt/terminal-matematico/deploy/linux/admin.sh device-add terminal-1
+# device_id : terminal-1
+# device_key: <base64, 32 bytes>   (exibida uma única vez; cifrada no banco do servidor)
 ```
 
-O backend guarda a chave em `DEVICES_FILE` (permissão 0600, fora do Git). Para revogar:
-`npm run provision -- --disable dev-001` e `kill -HUP` no processo.
+Alternativa: painel → Dispositivos → "Gerar código de cadastro" (uso único, 15 min) e
+`POST /api/v1/device/register`. Revogar/rotacionar: painel → Dispositivos (rotação com 24 h
+de carência para a chave anterior).
 
-## 2. Gravar a identidade no aparelho (partição `mtdata`)
+## 2. Gravar no aparelho (partição `mtdata`, namespace `mt`)
 
 ```bash
 TMP=$(mktemp -d)
-node tools/provision_device.js dev-001 '<device_key>' > $TMP/prov.csv
+node tools/provision_device.js terminal-1 '<device_key>' \
+     --lan https://192.168.1.10:8443 --remote https://api.seudominio \
+     --cf-id '<client id do token de serviço>' --cf-secret '<segredo>' > $TMP/prov.csv
 python $IDF_PATH/components/nvs_flash/nvs_partition_generator/nvs_partition_gen.py \
-    generate $TMP/prov.csv $TMP/mtdata.bin 0x100000          # desenvolvimento
-#   encrypt  $TMP/prov.csv $TMP/mtdata.bin 0x100000 --inputkey nvs_key.bin   # produção (esquema flash-enc)
+    generate $TMP/prov.csv $TMP/mtdata.bin 0x100000                 # desenvolvimento
+#   encrypt  $TMP/prov.csv $TMP/mtdata.bin 0x100000 --inputkey nvs_key.bin   # produção
 esptool.py --chip esp32s3 write_flash 0xC20000 $TMP/mtdata.bin
 rm -rf $TMP
 ```
 
-Com o esquema HMAC de criptografia do NVS, grave a partição pelo próprio firmware em um
-modo de fábrica, ou gere-a com a chave derivada do eFuse (documentação ESP-IDF "NVS Encryption").
+O aparelho recebe **apenas** credenciais do próprio servidor (chave HMAC e, se usar o túnel,
+o token de serviço do Access). Nenhuma chave de provedor de IA, senha de conta ou cookie.
+`lan_url`/`remote_url` também podem vir do `menuconfig` (`MT_BACKEND_URL`, `MT_BACKEND_REMOTE_URL`).
+Para a LAN com certificado próprio, coloque a CA em `firmware/certs/backend_ca.pem` e ative
+`MT_BACKEND_PINNED_CA` (usada só para a URL da LAN; a URL remota usa o bundle público).
 
 ## 3. PIN
 
-Não há PIN de fábrica. No primeiro uso a combinação de acesso abre a tela de criação do PIN.
+Não há PIN de fábrica: a primeira combinação abre a criação do PIN (6–8 dígitos).
 
 ## 4. Wi-Fi
 
-* No aparelho: *Ajustes → Wi-Fi → Adicionar rede* (SSID e senha pelo teclado virtual ou multi-tap).
-* Pelo celular: provisionamento SoftAP com prova de posse aleatória exibida no LCD
-  (`wifi_manager_start_provisioning`), usando o app oficial "ESP SoftAP Provisioning".
+No aparelho (*Ajustes → Wi-Fi*) ou pelo celular (SoftAP com prova de posse exibida no LCD,
+app oficial "ESP SoftAP Provisioning").

@@ -1,18 +1,19 @@
-# Atualização OTA
+# Atualização OTA pelo servidor doméstico
 
 Pré-requisito: primeira gravação e validação por USB.
 
-1. Incremente `PROJECT_VER`/versão e compile (com Secure Boot v2 a imagem sai assinada).
-2. Obtenha o hash de validação: `esptool.py --chip esp32s3 image_info build/terminal_matematico.bin`
-   (linha "Validation Hash").
-3. Publique por HTTPS o binário e um manifesto:
-   ```json
-   {"version": "0.2.0", "url": "https://updates.example/fw-0.2.0.bin", "sha256": "<validation hash>"}
-   ```
-4. Configure `CONFIG_MT_OTA_MANIFEST_URL`. No aparelho: *Ajustes → Atualização (OTA)*.
+1. Aumente a versão do projeto e compile (com Secure Boot v2 a imagem sai assinada).
+2. No servidor: `sudo /opt/terminal-matematico/deploy/linux/admin.sh ota-publish /caminho/terminal_matematico.bin`
+   (o arquivo deve ser legível pelo usuário `terminalmat`). O servidor lê o cabeçalho ESP
+   (magic `0xE9`, descritor do app, versão, projeto) e calcula o hash de validação.
+3. No painel → **Atualizações**: aprove a versão. Só versões aprovadas aparecem no manifesto.
+4. No aparelho: *Ajustes → Atualização (OTA)*.
 
-O aparelho baixa para o slot inativo (`ota_0`/`ota_1`), confere o hash, valida a imagem
-(assinatura com Secure Boot v2) e só então troca o slot de boot. No primeiro boot da nova
-versão, `ota_mark_valid()` é chamado depois do autoteste; se o aparelho reiniciar antes disso
-o bootloader volta à versão anterior (rollback). Configurações e dados ficam na partição
-`mtdata`, que a OTA nunca apaga. Mensagens de sucesso/erro aparecem no LCD.
+Fluxo no aparelho: `GET /api/v1/updates/manifest` (assinado HMAC) → se a versão for maior,
+`esp_https_ota` baixa `/api/v1/updates/firmware?version=…` **do mesmo servidor** (cabeçalhos
+HMAC adicionados por `http_client_init_cb`; nunca de URL de terceiros), grava o slot inativo,
+compara o hash com o manifesto, valida a imagem (assinatura com Secure Boot v2) e só então
+troca o slot. No primeiro boot, `ota_mark_valid()` após o autoteste; reinício antes disso →
+rollback automático. Dados ficam na partição `mtdata`, que a OTA não apaga.
+
+**Estado:** código escrito e compilado no CI; nunca executado em hardware.

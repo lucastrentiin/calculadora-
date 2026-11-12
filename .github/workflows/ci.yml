@@ -21,6 +21,10 @@ jobs:
           npm ci
           npx tsc --noEmit
           npm test
+      - name: Integracao simulador <-> servidor
+        run: npm run test:integration
+      - name: Scripts de implantacao (sintaxe)
+        run: for f in deploy/linux/*.sh; do bash -n "$f"; done
 
   firmware-host-tests:
     runs-on: ubuntu-latest

@@ -1,46 +1,46 @@
 # Segurança
 
-## O que está implementado (e onde é comprovado)
+## Camadas
 
-| Mecanismo | Implementação | Comprovado em |
+| Camada | Mecanismo | Comprovado em |
 |---|---|---|
-| Verificador do PIN | PBKDF2-HMAC-SHA256 (salt 16 B aleatório), armazena `SHA-256(dk[0:32])`; nunca o PIN | testes de host e simulador |
-| Chave de dados | `dk[32:64]` do mesmo PBKDF2; existe só em RAM com a sessão aberta | testes |
-| Cofre privado | AES-256-GCM (IV aleatório, AAD fixo), histórico de IA e favoritos | testes (blob não contém texto puro; chave errada falha) |
-| Tentativas | 5 erros → bloqueio 30 s, dobra a cada erro (máx. 1 h); persistido; contagem só avança com o aparelho ligado (sem RTC) | testes |
-| Bloqueio automático | inatividade configurável, suspensão e bateria crítica disparam PRIVACY_LOCK | testes |
-| Limpeza de buffers | `sec_wipe` (volátil) em PIN, textos, respostas, imagens, chaves | revisão + testes de comportamento |
-| Logs | eventos sem PIN, perguntas, respostas, SSID ou senha | testes verificam ausência no log |
-| Autenticação do dispositivo | HMAC-SHA256 sobre método, caminho, timestamp, nonce e hash do corpo; janela de 5 min; anti-replay | testes do backend e vetor cruzado C↔TS |
-| Chave da IA | apenas no backend (`ANTHROPIC_API_KEY`); o firmware nunca a recebe | arquitetura |
-| HTTPS | firmware recusa `http://` (exceto build de desenvolvimento); valida certificado com bundle de CAs ou CA fixada | código; **validar no hardware** |
-| Credenciais Wi-Fi | partição NVS `mtdata`, criptografada com `CONFIG_NVS_ENCRYPTION` | **somente no hardware** |
-| Flash Encryption / Secure Boot v2 | `sdkconfig.defaults.production` | **somente no hardware** |
-| OTA | TLS + verificação de hash do manifesto + assinatura (Secure Boot v2) + rollback | **somente no hardware** |
+| PIN | PBKDF2-HMAC-SHA256 (salt 16 B), verificador `SHA-256(dk[0:32])`; PIN nunca armazenado; sem PIN de fábrica | testes host + simulador |
+| Tentativas | 5 erros → 30 s, dobrando até 1 h; persistido | testes |
+| Cofre do aparelho | AES-256-GCM com `dk[32:64]` (só em RAM durante a sessão): histórico e favoritos | testes |
+| Sessão | `session_id` aleatório por login; resultados de outra sessão descartados; boot sempre NORMAL | testes (C e JS) |
+| Tecla ON | bloqueio imediato, limpeza de buffers, cancelamento local e remoto | testes; latência no LCD **a medir** |
+| Dispositivo ↔ servidor | HMAC-SHA256 (método, caminho+query, timestamp, nonce, hash do corpo), ±5 min, nonce único, chave por dispositivo cifrada no servidor, rotação/revogação | testes + vetor cruzado C↔TS |
+| Transporte | HTTPS obrigatório no firmware (http só em build de desenvolvimento); CA local fixada para a LAN, bundle público para o túnel | código; **validar no hardware** |
+| Acesso remoto | Cloudflare Tunnel (sem portas abertas) + Access: token de serviço para o terminal, login+MFA para o painel; JWT verificado também no servidor | testes com JWT local; **não testado com conta Cloudflare** |
+| Painel | scrypt + TOTP + sessão HttpOnly/SameSite=Strict/Secure + CSRF + Access; ausente na LAN por padrão | testes |
+| Segredos do servidor | AES-256-GCM (`master.key` 0600); nunca devolvidos pela API; nunca em logs | testes |
+| Processos de IA | sem shell, argumentos em vetor, prompt por stdin, diretório 0700, ambiente mínimo, timeout, kill do grupo, ferramentas desligadas, sandbox somente leitura (Codex), usuário sem privilégios | testes com binários falsos |
+| Serviço | usuário `terminalmat`, systemd endurecido, `UMask=0077`, escrita só em `/var/lib/terminal-matematico` | revisão (não executado com systemd neste ambiente) |
+| Firmware em repouso | NVS criptografado, Flash Encryption, Secure Boot v2 (`sdkconfig.defaults.production`) | **somente no hardware — não validado** |
+| OTA | TLS + HMAC + aprovação no painel + hash + assinatura + rollback | **somente no hardware — não validado** |
 
-O simulador usa WebCrypto e `localStorage`: **não** oferece proteção real contra quem tem
-acesso ao navegador. Ele demonstra o comportamento funcional, não a segurança física.
+## Proibições respeitadas
 
-## Iterações do PBKDF2
+Nenhuma senha de conta ou chave de API no aparelho; nenhum endpoint interno de sites de IA,
+cookie, token de navegador, Selenium/Playwright/Puppeteer para chats, scraping ou técnica
+para contornar limites; nenhum comando montado por concatenação ou executado por shell;
+nenhum parâmetro que conceda acesso irrestrito aos CLIs; CLIs nunca como root; nenhum
+comando sugerido pelo modelo é executado; painel e CLIs não são publicados por
+encaminhamento de portas; nenhum segredo real no repositório; nenhuma cobrança ou repetição
+automática em provedor faturável sem política explícita do dono; nenhum sistema existente
+do servidor é alterado pelos scripts; logs sem senhas, tokens, PINs ou imagens.
 
-O padrão do firmware é 60 000 (`CONFIG_MT_PBKDF2_ITERATIONS`). É obrigatório medir no
-ESP32-S3 final (aceleração SHA por hardware) e ajustar para ~0,5–1 s por verificação.
-A verificação roda na tarefa `crypto`, sem bloquear a interface nem a tecla ON.
+## Produção do firmware (irreversível — só após validação física)
 
-## Produção (irreversível)
-
-1. Gere a chave de assinatura: `espsecure.py generate_signing_key --version 2 secure_boot_signing_key.pem`
-   (guarde fora do repositório; `.gitignore` já bloqueia `*.pem`).
-2. Compile com `SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.production"`.
-3. Escolha o esquema de criptografia do NVS (HMAC com chave em eFuse é recomendado no S3).
-4. Teste primeiro em uma placa descartável: eFuses queimados não podem ser revertidos.
-5. Desative logs verbosos e o modo de download inseguro (já no arquivo de produção).
+1. `espsecure.py generate_signing_key --version 2 secure_boot_signing_key.pem` (fora do repositório).
+2. Compilar com `SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.production"`.
+3. Escolher o esquema de criptografia do NVS (HMAC em eFuse recomendado no S3).
+4. Testar primeiro em placa descartável: eFuses não voltam atrás.
 
 ## Limitações conhecidas
 
-* Sem RTC com bateria, o tempo de bloqueio só corre com o aparelho ligado (é persistido).
-* JavaScript não garante zeragem de memória; no C a limpeza é explícita.
-* A prévia da câmera usa HTTP na rede local (sem TLS) e é protegida por código de sessão de
-  uso curto; não a habilite em redes não confiáveis (ver `CAMERA_PREVIEW.md`).
-* Uma requisição já entregue ao provedor de IA pode ter sido processada mesmo após o
-  cancelamento; o sistema só garante que a resposta não é exibida nem armazenada.
+* Sem RTC com bateria, o tempo de bloqueio do PIN só corre com o aparelho ligado.
+* JavaScript não garante zeragem de memória (simulador); no C a limpeza é explícita.
+* A prévia da câmera no celular usa HTTP na LAN com código de sessão curto (ver `CAMERA_PREVIEW.md`).
+* Pedido já entregue a um provedor pode ter sido processado mesmo após cancelamento; o
+  sistema garante apenas que o resultado não é exibido nem armazenado.

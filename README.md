@@ -1,38 +1,43 @@
-# Terminal Matemático (ESP32-S3)
+# Terminal Matemático (ESP32-S3) + servidor doméstico
 
-Firmware, backend e simulador de um terminal matemático com LCD gráfico monocromático
-(referência 128×32), teclado físico, câmera OV3660, Wi-Fi e consulta opcional a IA.
+Calculadora científica embarcada (LCD gráfico monocromático 128×32, teclado físico, câmera
+OV3660, Wi-Fi, bateria Li-Po) cujo **modo NORMAL reproduz o comportamento da DEXIN
+KK-82MS-B** (família fx-82MS), com área protegida por PIN discreto para consultas a IA por
+texto/foto feitas **através de um servidor doméstico do proprietário**. O aparelho nunca
+guarda senhas de contas nem chaves de API.
 
-O dispositivo funciona como calculadora científica offline. Funções protegidas
-(IA por texto/imagem, histórico e favoritos privados, ajustes) ficam atrás de uma
-autenticação discreta por PIN. A tecla **ON** age como bloqueio de privacidade de um toque.
+```
+ Terminal ──Wi-Fi──► (LAN https) ─┐
+                                  ├─► Servidor doméstico (Node/TS) ──► provedores: Claude Code CLI, Codex CLI,
+ Terminal ──4G/Wi-Fi externo──► Cloudflare Tunnel + Access ─┘          API Anthropic, API OpenAI, Manual, Mock
+                                  painel web do proprietário (Access + senha + TOTP)
+```
 
 | Parte | Diretório | Estado |
 |---|---|---|
-| Simulador web (PC e celular) | `simulator/` | Funcional, sem dependências externas |
-| Backend seguro de IA (TypeScript) | `backend/` | Funcional; provedor Claude via SDK oficial; provedor mock |
-| Firmware ESP-IDF (C) | `firmware/` | Núcleo portável testado no host; camada ESP compilada no CI; **não validado em hardware** |
-| Testes | `tests/` | Simulador (node --test), firmware no host (CTest + ASan/UBSan) |
-| Documentação | `docs/` | Arquitetura, segurança, build, provisionamento, OTA, prévia da câmera |
-| Hardware | `hardware/` | Dados que faltam para fechar a integração |
+| Firmware ESP-IDF v5.4 (C) | `firmware/` | Núcleo portável testado no host (6 suítes, ASan/UBSan); build ESP32-S3 no CI; **não executado em hardware** |
+| Servidor doméstico (TypeScript, Node ≥ 22.13) | `backend/` | Funcional e testado (29 testes); provedores reais dependem das suas contas/chaves |
+| Painel do proprietário | `dashboard/` | Funcional (servido em `/admin/`) |
+| Simulador web (PC/celular) | `simulator/` | Funcional, sem dependências; conecta ao servidor real |
+| Implantação Linux / Cloudflare / Docker | `deploy/` | Scripts e unidade systemd prontos |
+| Testes | `tests/` | simulador (82), integração simulador↔servidor (2), firmware host (6 suítes) |
+| Documentação | `docs/` | ver abaixo — **relatório completo: [docs/RELATORIO.md](docs/RELATORIO.md)** |
+| Hardware | `hardware/` | dados que faltam (pinagem, LCD, teclado) — nada foi inventado |
 
 ## Início rápido
 
 ```bash
-# Simulador: abra simulator/index.html no navegador (duplo clique), ou:
-node tools/serve_simulator.js 8080          # http://127.0.0.1:8080
-node tools/serve_simulator.js 8080 --lan    # para abrir no celular na mesma rede
-
-# Todos os testes (simulador + backend + firmware no host)
-cd backend && npm ci && cd ..
-npm test
+npm --prefix backend ci
+npm test                                   # simulador + servidor + integração + firmware (host)
+node tools/serve_simulator.js 8080         # simulador em http://127.0.0.1:8080
 ```
 
-No simulador: digite contas normalmente. Para a área protegida pressione
-`SHIFT SHIFT ALPHA ALPHA` (padrão configurável); na primeira vez é pedido para criar o PIN
-(6 a 8 dígitos). Depois, a combinação mostra apenas um ponto no canto superior direito:
-digite o PIN e `=`. `ON` volta imediatamente ao modo normal.
+Instalação no servidor Linux: [deploy/README.md](deploy/README.md).
 
-Detalhes: [docs/BUILD.md](docs/BUILD.md) · [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) ·
-[docs/SECURITY.md](docs/SECURITY.md) · [docs/STATUS.md](docs/STATUS.md) ·
-[hardware/README.md](hardware/README.md)
+## Documentos
+
+[RELATORIO](docs/RELATORIO.md) · [ARQUITETURA](docs/ARCHITECTURE.md) · [SERVIDOR](docs/SERVER.md) ·
+[PROVEDORES DE IA](docs/PROVIDERS.md) · [CLOUDFLARE](deploy/cloudflared/README.md) · [SEGURANÇA](docs/SECURITY.md) ·
+[COMPATIBILIDADE DEXIN](docs/DEXIN_COMPAT.md) · [BUILD](docs/BUILD.md) · [PROVISIONAMENTO](docs/PROVISIONING.md) ·
+[OTA](docs/OTA.md) · [PRÉVIA DA CÂMERA](docs/CAMERA_PREVIEW.md) · [MCP](docs/MCP.md) · [ESTADO](docs/STATUS.md) ·
+[HARDWARE](hardware/README.md)

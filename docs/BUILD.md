@@ -2,48 +2,47 @@
 
 ## Requisitos
 
-* Node.js ≥ 22.18 (TypeScript é executado nativamente com *type stripping*)
+* Node.js ≥ 22.13 (TypeScript executado nativamente; `node:sqlite`)
 * CMake ≥ 3.16, GCC/Clang e OpenSSL (headers) para os testes de host do firmware
-* ESP-IDF v5.4.x para compilar o firmware (ou use o job de CI com `espressif/idf:v5.4.2`)
+* ESP-IDF v5.4.x para o firmware (o CI usa o container `espressif/idf:v5.4.2`)
+
+## Tudo de uma vez
+
+```bash
+npm --prefix backend ci
+npm test        # test:sim + test:backend + test:integration + test:firmware
+```
 
 ## Simulador
 
 ```bash
-# opção 1: abrir simulator/index.html diretamente no navegador
-# opção 2: servidor estático (também para celular)
-node tools/serve_simulator.js 8080 --lan
-npm run test:sim        # 56 testes (node --test)
+node tools/serve_simulator.js 8080          # ou abra simulator/index.html
+node tools/serve_simulator.js 8080 --lan    # celular na mesma rede
+npm run test:sim
 ```
 
 Teclado do PC: números/operadores, Enter `=`, Backspace `DEL`, Esc `AC`, setas, F1 `ON`,
-F2 `SHIFT`, F3 `ALPHA`, F4 `MODE`, F6 `MENU`, Insert `M+`. O painel lateral controla Wi-Fi,
-bateria, falhas de IA e câmera, OTA e permite executar um autoteste no navegador.
+F2 `SHIFT`, F3 `ALPHA`, F4 `MODE`, F6 `MENU`, Insert `M+`, `h` hyp, `d` °'", `k` ENG, `o` Pol,
+`u` x³, `v` RCL, `C` nCr. Painel lateral: Wi-Fi, bateria, falhas simuladas, câmera, OTA, e
+"IA" para apontar para o servidor real (URL local, URL remota, token do Access, id e chave).
 
-Para usar o backend real a partir do simulador: inicie o backend com `CORS_ORIGIN`, provisione
-um dispositivo e preencha URL, Device ID e chave no painel "IA".
-
-## Backend
+## Servidor doméstico (desenvolvimento)
 
 ```bash
 cd backend
-npm ci
+set -a; . ../deploy/env/development.env.example; set +a
+npm run admin -- create dono              # senha + TOTP (TOTP opcional em desenvolvimento)
+npm run admin -- device-add sim-1         # chave do dispositivo (exibida uma vez)
+npm start                                 # http://127.0.0.1:8787  (painel em /admin/)
 npm run typecheck && npm test
-npm run provision -- dev-001 "meu aparelho"     # imprime a chave UMA vez
-# desenvolvimento local sem IA real:
-AI_PROVIDER=mock ALLOW_INSECURE_HTTP=1 PORT=8080 npm start
-# produção (TLS direto ou atrás de proxy TLS):
-ANTHROPIC_API_KEY=... TLS_CERT_FILE=... TLS_KEY_FILE=... npm start
 ```
 
-Endpoints: `GET /v1/health`, `POST /v1/ask`, `POST /v1/image` (JPEG bruto),
-`POST /v1/requests/:id/cancel`. Configuração: `backend/.env.example`.
-Modelo padrão: `claude-opus-5-5` com saída estruturada e *fallback* de recusa no servidor
-(`ANTHROPIC_MODEL` e `AI_EFFORT` ajustáveis).
+Produção: [deploy/README.md](../deploy/README.md).
 
-## Firmware – testes de host (sem hardware)
+## Firmware – testes de host
 
 ```bash
-npm run test:firmware   # CMake + CTest, com AddressSanitizer/UBSan
+npm run test:firmware      # CMake + CTest, AddressSanitizer/UBSan
 ```
 
 ## Firmware – ESP32-S3
@@ -51,13 +50,9 @@ npm run test:firmware   # CMake + CTest, com AddressSanitizer/UBSan
 ```bash
 cd firmware
 idf.py set-target esp32s3
-idf.py menuconfig        # "Terminal Matematico": backend, pinos (quando definidos), câmera...
+idf.py menuconfig          # Terminal Matematico: URL LAN/remota, pinos (quando existirem), câmera, OTA
 idf.py build flash monitor
 ```
 
-Sem LCD e sem teclado definidos, use os drivers de bring-up (padrão): o visor é espelhado em
-ASCII no monitor serial e as teclas são digitadas no próprio monitor
-(dígitos, `+ - * / ^ ( )`, Enter `=`, Esc `AC`, `O`=ON, `S`=SHIFT, `A`=ALPHA, `M`=MENU,
-`u/d/h/o` setas).
-
-Depois de alterar fontes, fórmulas ou conversões no simulador: `npm run gen`.
+Sem LCD/teclado definidos, os drivers de bring-up espelham o visor em ASCII no monitor serial
+e leem teclas digitadas nele. Após alterar fontes/fórmulas/conversões no simulador: `npm run gen`.

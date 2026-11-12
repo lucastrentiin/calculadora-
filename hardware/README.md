@@ -18,6 +18,10 @@ aguardando o dado. Os campos correspondem ao `menuconfig` ("Terminal Matematico"
 * Número de linhas/colunas, GPIOs, diodos anti-ghosting (sim/não), posição de cada tecla
   (`CONFIG_MT_KEYPAD_KEYMAP`, nomes como em `keypad.h`), se ON é tecla separada com função de
   wake-up, tempo de assentamento do scan.
+* Teclas lógicas exigidas pelo modo NORMAL (layout fx-82MS + MENU): `SHIFT ALPHA MODE MENU ON`,
+  `INV NCR POL CUBE FRAC SQRT SQR POW LOG LN NEG DMS HYP SIN COS TAN RCL ENG LPAREN RPAREN COMMA STO`,
+  `K0..K9 DOT EXP ANS ADD SUB MUL DIV EQ DEL AC`, `UP DOWN LEFT RIGHT` (51 teclas lógicas). Se o teclado
+  físico da DEXIN for reaproveitado, a matriz real precisa ser levantada com multímetro.
 
 ## Câmera (CAMERA)
 * Módulo OV3660 exato, pinos D0–D7, XCLK, PCLK, VSYNC, HREF, SCCB SDA/SCL, PWDN, RESET,

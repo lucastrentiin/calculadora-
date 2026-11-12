@@ -12,7 +12,7 @@ Referência de código:
 |---|---|
 | Simulador (referência executável) | `simulator/js/core/sciCalc.js`, `simulator/js/core/mathEngine.js`, `simulator/js/core/keys.js` |
 | Testes do simulador | `tests/simulator/dexin.test.js` (17 cenários), `tests/simulator/app.test.js`, `tests/simulator/math.test.js` |
-| Firmware | `firmware/components/calculator`, `firmware/components/math_engine` (ver seção 5 — subconjunto) |
+| Firmware | `firmware/components/calculator`, `firmware/components/math_engine` (seção 5) |
 
 ## 1. Regras do modo NORMAL (verificadas por teste)
 
@@ -23,7 +23,7 @@ Referência de código:
 
 ## 2. Inventário de funções e mapeamento de teclas
 
-Legenda — Estado: **SIM** = implementado e testado no simulador; **SIM\*** = implementado, sem teste automatizado dedicado; **FW** = também no firmware C; **—** = não implementado. "Físico": comparação com o aparelho real.
+Legenda — Estado: **SIM** = implementado e testado no simulador **e** no firmware C (seção 5); **FW** = (marca antiga, equivalente a SIM); **—** = não implementado. "Físico": comparação com o aparelho real.
 
 | Tecla física | Primária | SHIFT | ALPHA | Comportamento por modo | Estado | Teste | Físico |
 |---|---|---|---|---|---|---|---|
@@ -44,7 +44,7 @@ Legenda — Estado: **SIM** = implementado e testado no simulador; **SIM\*** = i
 | (−) | sinal negativo (não continua de Ans) | — | A | COMP | SIM, FW | dexin "aritmetica" | pendente |
 | °'" | entrada sexagesimal | ← (decimal↔DMS) | B | COMP | SIM | dexin "graus-minutos" | pendente |
 | hyp | prefixo hiperbólico | — | C | COMP | SIM | dexin "trigonometria" | pendente |
-| sin / cos / tan | trig. no modo angular | sin⁻¹ / cos⁻¹ / tan⁻¹ | D / E / F | COMP | SIM, FW (sem GRA) | dexin "trigonometria" | pendente |
+| sin / cos / tan | trig. no modo angular | sin⁻¹ / cos⁻¹ / tan⁻¹ | D / E / F | COMP | SIM | dexin "trigonometria" | pendente |
 | RCL | RCL + variável | STO + variável | — | COMP | SIM | dexin "memorias" | pendente |
 | ENG | notação de engenharia (expoente ↓) | ← (expoente ↑) | — | COMP | SIM | dexin "formatos" | pendente |
 | ( / ) | parênteses (até 24 níveis de pilha) | — | X em `)` | COMP | SIM, FW | dexin "erros" (Stack) | pendente |
@@ -57,7 +57,7 @@ Legenda — Estado: **SIM** = implementado e testado no simulador; **SIM\*** = i
 | × ÷ + − | operadores | — | — | todos | SIM, FW | dexin "aritmetica" | pendente |
 | EXP | ×10ⁿ | π | — | COMP | SIM, FW | dexin "aritmetica", "trigonometria" | pendente |
 | Ans | último resultado | DRG► (°, ʳ, ᵍ) | — | COMP | SIM | dexin "DRG" | pendente |
-| = | calcula | % | — | COMP | SIM, FW (= ) | dexin "porcentagem" | pendente |
+| = | calcula | % | — | COMP | SIM | dexin "porcentagem" | pendente |
 | ◄ ► ▲ ▼ (REPLAY) | cursor / histórico / navegação de menus | — | — | todos | SIM, FW | dexin "edicao" | pendente |
 
 ### Telas de MODE implementadas
@@ -90,7 +90,7 @@ Legenda — Estado: **SIM** = implementado e testado no simulador; **SIM\*** = i
 | Algoritmo de Ran# | Gerador diferente; apenas o intervalo (0,000–0,999, 3 casas) é compatível. |
 | Ordem de prioridade de casos exóticos (multiplicação implícita, ex. `2sin30`) | Implementada segundo documentação da família; requer confirmação física. |
 | Desligamento automático (~6 min) | Implementado no `power_manager` do firmware com valor configurável; tempo exato do original não confirmado. |
-| Firmware C | Contém o subconjunto descrito na seção 5; o simulador é a referência completa. |
+| Localização do erro no firmware | O motor C não informa a posição do erro: ◄/► voltam ao fim (sintaxe) ou ao início (matemático), não ao token exato como no simulador. |
 
 ## 4. Procedimento de teste físico (para concluir a auditoria)
 
@@ -103,6 +103,15 @@ Materiais: calculadora DEXIN KK-82MS-B nova (bateria cheia), terminal (ou simula
 5. Corrija bugs no simulador **primeiro**, ajuste `dexin.test.js` com o valor real do aparelho, depois porte para o firmware.
 6. Só após todas as linhas da seção 2 terem "Físico = OK" o projeto pode declarar compatibilidade integral.
 
-## 5. Subconjunto já portado para o firmware C
+## 5. Firmware C
 
-Aritmética com precedência, parênteses, potências/raízes, log/ln/exp, trigonometria e inversas em DEG/RAD, Ans, histórico com ▲▼, DEL/AC, notação EXP, π, porcentagem simples, mensagens de erro. **Ainda não portados** (estão só no simulador): GRA, Fix/Sci/Norm/ENG, frações ┘, DMS, Pol/Rec, Rnd, Ran#, variáveis A–F/X/Y, hyp, SD/REG, menus MODE/CLR completos. Esses itens estão listados como pendentes em `docs/STATUS.md` e no relatório final.
+O modo NORMAL completo foi portado para `firmware/components/calculator` (+ extensões em
+`math_engine`: GRA, frações `┘`, DMS `°`, sufixos DRG `ᵒʳᵍ`, `nCr`/`nPr` infixos, `Pol(`/`Rec(`
+com E/F, `Rnd(`, `Ran#`, estimativas `x̂`/`ŷ`). Todas as linhas marcadas **SIM** na seção 2 valem
+também para o firmware; os mesmos cenários de `dexin.test.js` estão em
+`tests/firmware/src/test_calculator.c` (80 verificações) e `test_math_engine.c` (seção `sci82ms`).
+Variáveis, Ans e dados estatísticos persistem na NVS (`calc`); a configuração de MODE persiste
+nos ajustes. A tecla extra `MENU` abre as ferramentas offline (resolução passo a passo etc.).
+
+Teclas novas do teclado lógico (precisam constar do mapa físico, `hardware/KEYPAD.md`):
+`HYP`, `DMS`, `ENG`, `NCR`, `POL`, `CUBE`.
