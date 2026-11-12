@@ -12,6 +12,7 @@
  */
 #ifdef ESP_PLATFORM
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "ai_client.h"
@@ -26,7 +27,7 @@
 
 static const char *TAG = "ai_https";
 
-typedef struct { const char *ca_pem; } esp_tr_ctx_t;
+typedef struct { const char *ca_pem; char lan_prefix[128]; } esp_tr_ctx_t;
 static esp_tr_ctx_t s_ctx;
 
 static int esp_request(ai_transport_t *t, const char *method, const char *url, const ai_header_t *hdrs, int nh, const uint8_t *body, size_t len,
@@ -47,7 +48,9 @@ static int esp_request(ai_transport_t *t, const char *method, const char *url, c
         .buffer_size_tx = 1024,
         .keep_alive_enable = false,
     };
-    if (c->ca_pem) cfg.cert_pem = c->ca_pem;
+    /* pinned local CA only for the LAN server; the remote (Cloudflare) hostname uses the public CA bundle */
+    bool lan = c->lan_prefix[0] && strncmp(url, c->lan_prefix, strlen(c->lan_prefix)) == 0;
+    if (c->ca_pem && (lan || !c->lan_prefix[0])) cfg.cert_pem = c->ca_pem;
     else cfg.crt_bundle_attach = esp_crt_bundle_attach;
     if (on_phase) on_phase(u, AI_PHASE_CONNECTING);
     esp_http_client_handle_t h = esp_http_client_init(&cfg);
@@ -108,9 +111,10 @@ out:
 
 static ai_transport_t s_tr = {esp_request, &s_ctx};
 
-ai_transport_t *ai_transport_esp_create(const char *ca_pem)
+ai_transport_t *ai_transport_esp_create(const char *ca_pem, const char *lan_url)
 {
     s_ctx.ca_pem = ca_pem;
+    snprintf(s_ctx.lan_prefix, sizeof(s_ctx.lan_prefix), "%s", lan_url ? lan_url : "");
     return &s_tr;
 }
 

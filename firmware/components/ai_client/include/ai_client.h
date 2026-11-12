@@ -172,8 +172,9 @@ int ai_sign(const uint8_t key[32], const char *method, const char *path, const c
             const uint8_t *body, size_t len, char sig_hex[65]);
 
 #ifdef ESP_PLATFORM
-/** HTTPS transport over esp_http_client with certificate validation (CA bundle or pinned PEM). */
-ai_transport_t *ai_transport_esp_create(const char *ca_pem_or_null);
+/** HTTPS transport over esp_http_client with certificate validation. A pinned PEM (local CA) is used for
+ *  URLs starting with lan_url; every other URL (Cloudflare hostname) is validated with the public CA bundle. */
+ai_transport_t *ai_transport_esp_create(const char *ca_pem_or_null, const char *lan_url);
 /** Start the worker task. */
 int ai_client_start_worker(ai_client_t *c, uint32_t stack, int prio);
 /** Notify the worker that a job or a remote cancellation is pending. */

@@ -178,7 +178,7 @@ void app_main(void)
     snprintf(acfg.remote_url, sizeof(acfg.remote_url), "%s", CONFIG_MT_BACKEND_REMOTE_URL);
     snprintf(acfg.firmware, sizeof(acfg.firmware), "%s", esp_app_get_description()->version);
     if (load_device_credentials(kv, &acfg)) {
-        acfg.transport = ai_transport_esp_create(BACKEND_CA);
+        acfg.transport = ai_transport_esp_create(BACKEND_CA, acfg.base_url);
         acfg.now_s = now_unix;
         ai_client_init(&s_ai, &acfg);
         ai_client_start_worker(&s_ai, 8192, 4);

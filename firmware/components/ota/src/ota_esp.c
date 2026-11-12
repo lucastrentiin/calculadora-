@@ -94,7 +94,8 @@ static void apply_task(void *arg)
 {
     (void)arg;
     esp_http_client_config_t http = {.url = s.new_url, .timeout_ms = 15000, .keep_alive_enable = true};
-    if (s.ca) http.cert_pem = s.ca; else http.crt_bundle_attach = esp_crt_bundle_attach;
+    bool lan = s.ai && s.ai->cfg.base_url[0] && strcmp(s.base, s.ai->cfg.base_url) == 0;
+    if (s.ca && lan) http.cert_pem = s.ca; else http.crt_bundle_attach = esp_crt_bundle_attach;
     esp_https_ota_config_t cfg = {.http_config = &http, .http_client_init_cb = sign_download};
 #ifndef CONFIG_MT_ALLOW_HTTP
     if (strncmp(s.new_url, "https://", 8) != 0) { set_msg(OTA_FAILED, "URL sem HTTPS recusada"); vTaskDelete(NULL); }

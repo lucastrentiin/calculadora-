@@ -10,3 +10,10 @@ firmware/dependencies.lock
 *.pem
 *.key
 .env
+backend/data/*
+!backend/data/.gitkeep
+*.db
+*.sqlite
+*.tar.gz.gpg
+*.enc
+deploy/env/*.env
