@@ -15,6 +15,7 @@ async function setup(opts = {}) {
   if (opts.ai) platform.ai = opts.ai;
   const mk = () => new App(platform, { authPolicy: { iterations: 1000 } });
   const app = mk();
+  app.settings.aiNoticeAck = true; // privacy notice covered by its own test
   const k = (...keys) => keys.flat().forEach(x => app.handleKey(typeof x === 'string' ? { key: x } : x));
   const ctx = { app, k, platform, logs, advance: (ms) => { t += ms; }, mk, get t() { return t; } };
   if (opts.pin !== false) {
@@ -113,7 +114,7 @@ test('protected menu navigation: wrap-around, shortcuts and back', async () => {
   c.k('DOWN'); assert.equal(menu.sel, 0);
   c.k('DOWN', 'DOWN', 'EQ'); assert.equal(c.app.state, 'MATH_TOOLS');
   c.k('AC'); assert.equal(c.app.state, 'AUTHENTICATED');
-  c.k('7'); assert.equal(c.app.state, 'SETTINGS');
+  c.k('8'); assert.equal(c.app.state, 'SETTINGS');
   c.k('LEFT'); // LEFT on a cycle item changes the value instead of leaving
   assert.equal(c.app.settings.responseMode, 'fast');
   c.k('AC'); c.k('6'); assert.equal(c.app.settings.responseMode, 'short');
@@ -129,7 +130,7 @@ test('PRIVACY_LOCK from every protected state returns to NORMAL in < 100 ms and 
     AI_RESPONSE: async () => { c.platform.ai.latencyMs = 5; c.k('1'); c.app.handleKey({ key: 'CHAR', ch: '3*3' }); c.app.handleKey({ key: 'EQ', shift: true }); await c.app.ai.promise; c.platform.ai.latencyMs = 2000; },
     CAMERA: async () => { c.k('2'); await wait(200); },
     MATH_TOOLS: () => c.k('3'),
-    SETTINGS: () => c.k('7')
+    SETTINGS: () => c.k('8')
   };
   for (const [st, go] of Object.entries(states)) {
     await login(c);
@@ -240,7 +241,7 @@ test('history and favorites are encrypted at rest and survive re-authentication'
   assert.equal(c.app.top.items(c.app).length, 2); // item + "apagar tudo"
   c.k('DEL'); await wait(10);
   assert.equal(c.app.vault.data.history.length, 0);
-  c.k('AC', '7');
+  c.k('AC', '8');
   const menu = c.app.top;
   // AC on the protected root menu ends the session (tested below)
   const idx = menu.items(c.app).findIndex(i => i.label === 'Historico IA');

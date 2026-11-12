@@ -18,6 +18,7 @@
     let t = 1e6;
     const platform = P.createPlatform({ clock: () => t, aiOpts: { latencyMs: 5 } });
     const app = new AppMod.App(platform, { authPolicy: { iterations: 1000 } });
+    app.settings.aiNoticeAck = true;
     const k = (...ks) => ks.forEach(x => app.handleKey(typeof x === 'string' ? { key: x } : x));
     k('SHIFT', 'SHIFT', 'ALPHA', 'ALPHA', '1', '2', '3', '4', '5', '6', 'DOWN', '1', '2', '3', '4', '5', '6', 'EQ');
     await app.pinSetupPromise;
@@ -53,7 +54,7 @@
         AI_REQUEST: async () => { c.k('1'); c.app.handleKey({ key: 'CHAR', ch: '2+2' }); c.app.handleKey({ key: 'EQ', shift: true }); },
         CAMERA: async () => { c.k('2'); },
         MATH_TOOLS: async () => c.k('3'),
-        SETTINGS: async () => c.k('7')
+        SETTINGS: async () => c.k('8')
       };
       for (const [st, go] of Object.entries(reach)) {
         await login(c); await go();

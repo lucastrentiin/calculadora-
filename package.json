@@ -4,8 +4,9 @@
   "private": true,
   "description": "Terminal matematico embarcado (ESP32-S3): simulador, backend e firmware",
   "scripts": {
-    "test": "npm run test:sim && npm run test:backend && npm run test:firmware",
+    "test": "npm run test:sim && npm run test:backend && npm run test:integration && npm run test:firmware",
     "test:sim": "node --test \"tests/simulator/*.test.js\"",
+    "test:integration": "node --test \"tests/integration/*.test.js\"",
     "test:backend": "cd backend && npm test",
     "test:firmware": "cmake -S tests/firmware -B build/host-tests -DCMAKE_BUILD_TYPE=Debug && cmake --build build/host-tests -j && ctest --test-dir build/host-tests --output-on-failure",
     "gen": "node tools/gen_firmware_tables.js",

@@ -111,6 +111,8 @@
       ph('conectando');
       await sleep(this.latencyMs * 0.2, signal);
       if (this.failMode === 'offline') throw new Error('Servidor inacessivel (simulado)');
+      if (this.failMode === 'tls') throw new Error('Falha de TLS: certificado do servidor invalido (simulado)');
+      if (payload.provider === 'claude_code' && this.failMode === 'provider_down') throw new Error('HTTP 503: Claude (Claude Code): nao autenticado (simulado)');
       ph('enviando');
       await sleep(this.latencyMs * 0.2, signal);
       ph('enviado');
@@ -127,9 +129,12 @@
         case 'refused': return { version: 1, request_id: payload.requestId, mode: payload.mode, status: 'refused', answer: '', notes: 'Solicitacao recusada (simulado).' };
         case 'huge': { const r = simulatedAnswer(payload); r.steps = Array.from({ length: 500 }, (_, i) => ({ title: 'Etapa ' + i, math: 'x'.repeat(3000), text: 'y'.repeat(3000) })); return r; }
         case 'mismatch': { const r = simulatedAnswer(payload); if (r.check) r.check.expected += 1; return r; }
-        default: return simulatedAnswer(payload);
+        case 'no_credits': return { version: 1, request_id: payload.requestId, mode: payload.mode, status: 'error', answer: '', notes: 'Sem creditos na API (simulado)', error: { code: 'billing', message: 'Sem creditos' } };
+        default: { const r = simulatedAnswer(payload); r.provider = payload.provider && payload.provider !== 'auto' ? payload.provider : 'mock'; r.model = 'simulado'; r.uncertainty = []; r.verification = r.check ? { state: 'match', detail: 'Servidor confere (simulado)' } : { state: 'none', detail: '' }; return r; }
       }
     }
+    async config() { await sleep(20); if (this.failMode === 'offline') throw new Error('Servidor inacessivel (simulado)'); return { protocol: 'mt1', providers: [{ id: 'auto', label: 'AUTOMATICO' }, { id: 'mock', label: 'DEMO' }, { id: 'codex_cli', label: 'GPT' }, { id: 'claude_code', label: 'CLAUDE' }], privacy_notice: 'Perguntas e imagens enviadas a um provedor externo sao processadas por esse servico segundo as politicas dele.' }; }
+    async status() { await sleep(20); if (this.failMode === 'offline') throw new Error('Servidor inacessivel (simulado)'); return { protocol: 'mt1', authorized: true }; }
     async cancelRemote(id) {
       await sleep(50);
       const st = this.server.get(id);
@@ -139,47 +144,94 @@
     }
   }
 
-  /* ------------------------------ AI: real backend -------------------- */
+  /* ------------------------------ AI: real home server (protocol mt1) ---- */
   class HttpAI {
-    constructor({ baseUrl, deviceId, deviceKeyB64, timeoutMs = 60000 }) {
-      this.baseUrl = baseUrl.replace(/\/$/, ''); this.deviceId = deviceId; this.timeoutMs = timeoutMs; this.name = 'Backend real';
+    /**
+     * baseUrls: [local, remote] - the local (LAN) address is tried first; on a
+     * connection failure BEFORE the request is sent the remote (Cloudflare) one is used.
+     * accessClientId/Secret: optional Cloudflare Access service token headers.
+     */
+    constructor({ baseUrl, remoteUrl, deviceId, deviceKeyB64, accessClientId, accessClientSecret, timeoutMs = 120000, fetchImpl }) {
+      this.urls = [baseUrl, remoteUrl].filter(Boolean).map(u => u.replace(/\/$/, ''));
+      if (!this.urls.length) throw new Error('URL do servidor ausente');
+      this.deviceId = deviceId; this.timeoutMs = timeoutMs; this.name = 'Servidor domestico';
+      this.access = accessClientId ? { 'CF-Access-Client-Id': accessClientId, 'CF-Access-Client-Secret': accessClientSecret || '' } : {};
       const raw = atob(deviceKeyB64); this.key = new Uint8Array(raw.length); for (let i = 0; i < raw.length; i++) this.key[i] = raw.charCodeAt(i);
+      this.fetch = fetchImpl || ((...a) => fetch(...a));
+      this.active = 0;
     }
-    async headers(method, path, body) {
+    async headers(method, pathWithQuery, body) {
       const ts = Math.floor(Date.now() / 1000).toString();
       const nonce = hex(webCrypto.randomBytes(12));
       const bodyHash = hex(await webCrypto.sha256(body));
-      const msg = new TextEncoder().encode([method, path, ts, nonce, bodyHash].join('\n'));
+      const msg = new TextEncoder().encode([method, pathWithQuery, ts, nonce, bodyHash].join('\n'));
       const sig = hex(await webCrypto.hmacSha256(this.key, msg));
-      return { 'X-Device-Id': this.deviceId, 'X-Timestamp': ts, 'X-Nonce': nonce, 'X-Signature': sig };
+      return Object.assign({ 'X-Device-Id': this.deviceId, 'X-Timestamp': ts, 'X-Nonce': nonce, 'X-Signature': sig, 'X-Protocol': 'mt1', 'X-Firmware': 'simulador' }, this.access);
     }
+    /** Signed request with local->remote failover only when nothing was sent. */
+    async req(method, path, body, extra = {}, signal) {
+      body = body || new Uint8Array(0);
+      let lastErr;
+      for (let k = 0; k < this.urls.length; k++) {
+        const idx = (this.active + k) % this.urls.length;
+        const h = Object.assign(await this.headers(method, path, body), extra);
+        try {
+          const res = await this.fetch(this.urls[idx] + path, { method, headers: h, body: method === 'GET' ? undefined : body, signal });
+          this.active = idx;
+          return res;
+        } catch (e) {
+          if (signal && signal.aborted) throw new Error('cancelado');
+          lastErr = e; // connection refused / DNS / TLS: request not delivered -> try the other address
+        }
+      }
+      throw new Error('Servidor inacessivel (' + (lastErr && lastErr.message ? lastErr.message : 'rede/TLS') + ')');
+    }
+    async json(res) {
+      const j = await res.json().catch(() => null);
+      if (res.status >= 400) throw new Error('HTTP ' + res.status + (j && j.error ? ': ' + j.error.message : ''));
+      return j;
+    }
+    async config() { return this.json(await this.req('GET', '/api/v1/device/config')); }
+    async status() { return this.json(await this.req('GET', '/api/v1/device/status')); }
     async ask(payload, { signal, onPhase } = {}) {
       const ph = (p) => onPhase && onPhase(p);
-      let path, body, ctype;
+      let res;
+      ph('conectando');
       if (payload.kind === 'image') {
-        path = '/v1/image'; body = payload.image; ctype = 'image/jpeg';
+        const extra = { 'Content-Type': 'image/jpeg', 'X-Request-Id': payload.requestId, 'X-Mode': payload.mode, 'X-Provider': payload.provider || 'auto',
+          'X-Session-Id': payload.sessionId || '', 'X-Prompt': btoa(unescape(encodeURIComponent(payload.prompt || ''))) };
+        ph('enviando');
+        res = await this.req('POST', '/api/v1/ai/vision', payload.image, extra, signal);
       } else {
-        path = '/v1/ask'; body = new TextEncoder().encode(JSON.stringify({ request_id: payload.requestId, question: payload.question, mode: payload.mode })); ctype = 'application/json';
+        const body = new TextEncoder().encode(JSON.stringify({ request_id: payload.requestId, session_id: payload.sessionId, question: payload.question, mode: payload.mode, provider: payload.provider || 'auto' }));
+        ph('enviando');
+        res = await this.req('POST', '/api/v1/ai/ask', body, { 'Content-Type': 'application/json' }, signal);
       }
-      const h = await this.headers('POST', path, body);
-      h['Content-Type'] = ctype;
-      if (payload.kind === 'image') { h['X-Request-Id'] = payload.requestId; h['X-Mode'] = payload.mode; h['X-Prompt'] = btoa(unescape(encodeURIComponent(payload.prompt || ''))); }
-      ph('enviando');
-      const t = setTimeout(() => ph('aguardando'), 300);
-      try {
-        const res = await fetch(this.baseUrl + path, { method: 'POST', headers: h, body, signal });
-        ph('enviado');
-        const json = await res.json().catch(() => null);
-        if (!res.ok) throw new Error('HTTP ' + res.status + (json && json.error ? ': ' + json.error : ''));
-        return json;
-      } finally { clearTimeout(t); }
+      ph('enviado');
+      const deadline = Date.now() + this.timeoutMs;
+      while (res.status === 202) { // long task: poll (Cloudflare closes requests after ~100 s)
+        ph('aguardando');
+        if (Date.now() > deadline) throw new Error('Tempo esgotado aguardando o servidor');
+        const path = '/api/v1/requests/' + encodeURIComponent(payload.requestId) + '?wait=20000';
+        res = await this.req('GET', path, null, {}, signal);
+      }
+      const first = await this.json(res);
+      if (!first || first.status === 'cancelled') throw new Error('cancelado no servidor');
+      ph('recebendo');
+      if (first.page && first.page.count > 1) { // fetch every page: no step is dropped
+        for (let p = 1; p < first.page.count; p++) {
+          const path = '/api/v1/requests/' + encodeURIComponent(payload.requestId) + '?page=' + p;
+          const more = await this.json(await this.req('GET', path, null, {}, signal));
+          first.steps = first.steps.concat(more.steps || []);
+        }
+        first.page = { index: 0, count: 1, steps_total: first.steps.length };
+      }
+      return first;
     }
     async cancelRemote(id) {
-      const path = '/v1/requests/' + encodeURIComponent(id) + '/cancel';
-      const body = new Uint8Array(0);
-      const res = await fetch(this.baseUrl + path, { method: 'POST', headers: await this.headers('POST', path, body), body });
-      const j = await res.json().catch(() => ({}));
-      return { status: j.status || ('HTTP ' + res.status) };
+      const body = new TextEncoder().encode(JSON.stringify({ request_id: id }));
+      const j = await this.json(await this.req('POST', '/api/v1/requests/cancel', body, { 'Content-Type': 'application/json' }));
+      return { status: j.status || 'desconhecido' };
     }
   }
 

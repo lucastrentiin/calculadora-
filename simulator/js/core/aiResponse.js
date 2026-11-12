@@ -55,6 +55,15 @@
         title: str(s.title, 200, 'step.title', errors), math: str(s.math, LIMITS.field, 'step.math', errors), text: str(s.text, LIMITS.field, 'step.text', errors)
       }));
     }
+    // protocol mt1 extras (optional; shown when present)
+    out.provider = str(obj.provider, 40, 'provider', errors, false);
+    out.model = str(obj.model, 80, 'model', errors, false);
+    out.original_expression = str(obj.original_expression, LIMITS.field, 'original_expression', errors, false);
+    out.uncertainty = Array.isArray(obj.uncertainty) ? obj.uncertainty.slice(0, 10).map(u => str(u, 300, 'uncertainty', errors)) : [];
+    if (obj.verification && typeof obj.verification === 'object' && ['match', 'mismatch', 'none', 'error'].includes(obj.verification.state)) {
+      out.serverVerification = { state: obj.verification.state, detail: str(obj.verification.detail, 200, 'verification', errors) };
+    }
+    if (obj.error && typeof obj.error === 'object') out.error = { code: str(obj.error.code, 40, 'error.code', errors), message: str(obj.error.message, 300, 'error.message', errors) };
     if (obj.check && typeof obj.check === 'object') {
       const e = str(obj.check.expression, 256, 'check.expression', errors);
       const x = obj.check.expected;
@@ -85,10 +94,14 @@
     const text = (t) => { if (t) B.push({ kind: 'text', text: t }); };
     const math = (t, rule) => { if (t) B.push({ kind: 'math', text: t, rule }); };
     if (meta.question) { title('Pergunta'); text(meta.question); }
+    const ERR_TEXT = { billing: 'Sem creditos ou faturamento pendente no provedor.', auth: 'Provedor nao autenticado ou credencial revogada.', rate_limit: 'Limite de uso do provedor atingido.',
+      unavailable: 'Provedor indisponivel.', timeout: 'Tempo esgotado no provedor.', provider_unavailable: 'Provedor nao configurado no servidor.' };
     if (resp.status === 'refused') { title('[IA] Recusado'); text(resp.notes || 'O servico recusou a solicitacao.'); return B; }
-    if (resp.status === 'error') { title('[IA] Erro'); text(resp.notes || 'Erro no servico.'); return B; }
+    if (resp.status === 'error') { title('[IA] Erro'); text((resp.error && ERR_TEXT[resp.error.code]) || resp.notes || 'Erro no servico.'); return B; }
     title('[IA] Resultado (' + MODE_LABEL[m] + ')');
+    if (resp.provider) text('Fonte: ' + resp.provider + (resp.model ? ' / ' + resp.model : ''));
     math(resp.answer);
+    if (m !== 'fast' && resp.original_expression) { text('Enunciado:'); math(resp.original_expression); }
     if (m !== 'fast') {
       if (m === 'full' && resp.given.length) { title('Dados'); resp.given.forEach(g => math(g.name + ' = ' + g.value)); }
       if (m === 'full' && resp.formulas.length) { title('Formulas'); resp.formulas.forEach(f => math(f)); }
@@ -104,6 +117,8 @@
       }
       if (m === 'full' && resp.notes) { title('Observacoes'); text(resp.notes); }
     }
+    if (resp.uncertainty && resp.uncertainty.length) { title('[IA] Incertezas'); resp.uncertainty.forEach(u => text('- ' + u)); }
+    if (resp.serverVerification && resp.serverVerification.state !== 'none') { title('[SERVIDOR] Verificacao'); text(resp.serverVerification.detail); }
     title('[LOCAL] Verificacao');
     text(verification.text);
     if (resp.truncated) text('Aviso: resposta truncada por limite de tamanho.');

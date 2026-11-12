@@ -32,15 +32,18 @@
       <summary>IA</summary>
       <div class="grid">
         <label>Fonte
-          <select id="aiSource"><option value="mock">IA simulada (local)</option><option value="http">Backend real (HTTPS)</option></select></label>
+          <select id="aiSource"><option value="mock">IA simulada (local)</option><option value="http">Servidor doméstico real (protocolo mt1)</option></select></label>
         <label>Falha simulada
           <select id="aiFail">
             <option value="none">nenhuma</option><option value="offline">servidor inacessível</option><option value="timeout">timeout</option>
             <option value="http500">erro 5xx</option><option value="invalid">JSON incompleto</option><option value="garbage">resposta não-JSON</option>
-            <option value="huge">resposta enorme</option><option value="refused">recusa</option><option value="mismatch">resultado divergente</option>
+            <option value="huge">resposta enorme</option><option value="refused">recusa</option><option value="mismatch">resultado divergente</option><option value="tls">falha de TLS</option><option value="provider_down">Claude indisponível</option><option value="no_credits">API sem créditos</option>
           </select></label>
         <label>Latência (ms) <input type="number" id="aiLatency" value="1500" min="0" step="100"></label>
-        <label>URL do backend <input id="aiUrl" placeholder="https://localhost:8443"></label>
+        <label>URL local (LAN) <input id="aiUrl" placeholder="https://192.168.x.x:8443"></label>
+        <label>URL remota (Cloudflare) <input id="aiRemote" placeholder="https://calc.seudominio"></label>
+        <label>Access Client ID (opcional) <input id="aiCfId" autocomplete="off"></label>
+        <label>Access Client Secret (opcional) <input id="aiCfSecret" type="password" autocomplete="off"></label>
         <label>Device ID <input id="aiDevice" placeholder="dev-001"></label>
         <label>Chave do dispositivo (base64) <input id="aiKey" type="password" autocomplete="off"></label>
       </div>

@@ -107,6 +107,23 @@
     MUL: 'nCr(', DIV: 'nPr(', DOT: ','
   };
 
+  function lcdPatternView(state) {
+    return { state, protected: true, n: 0,
+      onKey(ev, a) { if (ev.key === 'AC') { a.pop(); return true; } if (ev.key === 'RIGHT' || ev.key === 'EQ') this.n = (this.n + 1) % 4; if (ev.key === 'LEFT') this.n = (this.n + 3) % 4; return true; },
+      render(fb) {
+        for (let y = 0; y < fb.height; y++) for (let x = 0; x < fb.width; x++) {
+          const on = [1, 0, (x + y) % 2, x === 0 || y === 0 || x === fb.width - 1 || y === fb.height - 1 ? 1 : 0][this.n];
+          if (on) fb.setPixel(x, y, 1);
+        }
+      } };
+  }
+  function keyTestView(state) {
+    const seen = new Set();
+    return { state, protected: true, last: '',
+      onKey(ev, a) { if (ev.key === 'AC' && this.last === 'AC') { a.pop(); return true; } this.last = ev.key; seen.add(ev.key); return true; },
+      render(fb) { fb.drawText(2, 0, 'Tecla: ' + this.last); fb.drawText(2, 8, 'Testadas: ' + seen.size); fb.drawTiny(2, 26, 'AC 2X SAI  ON BLOQUEIA'); } };
+  }
+
   /* ======================================================================
    * App
    * ==================================================================== */
@@ -287,7 +304,9 @@
       return done;
     }
     openSession(dataKey) {
-      this.session = { authenticated: true, since: this.now() };
+      // fresh, never reused session id: async results are bound to it
+      this.session = { authenticated: true, since: this.now(), id: this.p.crypto.uuid() };
+      this.loadProviders(this.session.id);
       this.vaultReady = this.vault.open(dataKey);
       this.lastActivity = this.now();
       this.push(this.protectedMenu());
@@ -403,12 +422,13 @@
      * ==================================================================== */
     protectedMenu() {
       return new V.MenuView(S.AUTHENTICATED, 'Menu', [
-        { label: 'Perguntar (texto)', select: (a) => a.openQuestion() },
-        { label: 'Camera', select: (a) => a.openCamera() },
+        { label: 'Perguntar (texto)', select: (a) => a.withPrivacyNotice(() => a.openQuestion()) },
+        { label: 'Camera', select: (a) => a.withPrivacyNotice(() => a.openCamera()) },
         { label: 'Ferramentas', select: (a) => a.openTools(true) },
         { label: 'Favoritos', select: (a) => a.openFavorites() },
         { label: 'Historico', select: (a) => a.openHistory() },
         { label: 'Modo resposta', value: (a) => MODE_NAMES[a.settings.responseMode], cycle: (a, d) => a.cycleSetting('responseMode', ['fast', 'short', 'full'], d) },
+        { label: 'Assistente', value: (a) => ((a.providerChoices || []).find(c => c.id === a.settings.provider) || { label: 'AUTOMATICO' }).label, select: (a) => a.openAssistantMenu() },
         { label: 'Ajustes', select: (a) => a.openSettings() },
         { label: 'Bloquear', select: (a) => a.privacyLock('menu') }
       ], { protected: true, onBack: (a) => a.privacyLock('menu') }); // leaving the protected root ends the session
@@ -434,6 +454,43 @@
       return ed;
     }
 
+    /** Providers offered by the home server (only configured/authorised ones). */
+    loadProviders(sessionId) {
+      this.providerChoices = this.providerChoices || [{ id: 'auto', label: 'AUTOMATICO' }];
+      if (!this.p.ai || !this.p.ai.config) return Promise.resolve();
+      return this.p.ai.config().then(c => {
+        if (this.session.id !== sessionId) return; // session ended meanwhile
+        this.providerChoices = (c && Array.isArray(c.providers) && c.providers.length) ? c.providers : [{ id: 'auto', label: 'AUTOMATICO' }];
+        this.privacyNotice = c && c.privacy_notice;
+        if (!this.providerChoices.some(x => x.id === this.settings.provider)) this.settings.provider = 'auto';
+      }, () => { /* server down: AUTOMATICO only, calculator unaffected */ });
+    }
+
+    openAssistantMenu() {
+      return this.push(new V.MenuView(S.AUTHENTICATED, 'Assistente', (a) => (a.providerChoices || [{ id: 'auto', label: 'AUTOMATICO' }]).map(c => ({
+        label: (a.settings.provider === c.id ? '*' : '') + c.label,
+        select: (x) => { x.settings.provider = c.id; x.saveSettings(); x.pop(); }
+      })), { protected: true }));
+    }
+
+    /** The external-processing notice must be accepted once before the first AI use. */
+    withPrivacyNotice(next) {
+      if (this.settings.aiNoticeAck) return next();
+      return this.push(new V.ReaderView(S.AUTHENTICATED, 'Aviso', [
+        { kind: 'title', text: 'Privacidade' },
+        { kind: 'text', text: this.privacyNotice || 'Perguntas e imagens enviadas a um provedor externo sao processadas por esse servico segundo as politicas dele.' },
+        { kind: 'text', text: 'Fotos nao sao gravadas no aparelho.' },
+        { kind: 'text', text: '= aceitar  AC voltar' }
+      ], { protected: true, onEnter: (a) => { a.settings.aiNoticeAck = true; a.saveSettings(); a.pop(); next(); } }));
+    }
+
+    /** May an async AI result touch the screen? (session, cancellation and state checks) */
+    aiResultAllowed(req) {
+      if (this.ai !== req || req.cancelled) return false;
+      if (!this.session.authenticated || this.session.id !== req.sessionId) return false;
+      return this.state === S.AI_REQUEST && this.top && this.top.isAi && this.top.reqId === req.id;
+    }
+
     startAi(payload) {
       const wifi = this.p.wifi ? this.p.wifi.status() : { connected: false };
       if (!wifi.connected) {
@@ -441,12 +498,14 @@
         return null;
       }
       const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : { signal: {}, abort() {} };
-      const req = { id: this.p.crypto.uuid(), phase: 'conectando', sent: false, ctrl, payload, startedAt: this.now() };
+      payload = Object.assign({ provider: this.settings.provider || 'auto', sessionId: this.session.id }, payload);
+      const req = { id: this.p.crypto.uuid(), phase: 'conectando', sent: false, ctrl, payload, startedAt: this.now(), sessionId: this.session.id };
       this.ai = req;
       const busy = new V.BusyView(S.AI_REQUEST, () => [payload.kind === 'image' ? 'Analisando imagem' : 'Consultando', req.phase + '...', 'Modo ' + MODE_NAMES[payload.mode]], {
         onCancel: (app) => { app.cancelAi('user'); app.pop(); }
       });
       busy.isAi = true;
+      busy.reqId = req.id;
       this.push(busy);
       const promise = this.p.ai.ask(Object.assign({ requestId: req.id }, payload), {
         signal: ctrl.signal,
@@ -460,6 +519,7 @@
       const req = this.ai;
       if (!req) return;
       this.ai = null;
+      req.cancelled = true;
       try { req.ctrl.abort(); } catch (e) { /* ignore */ }
       if (req.payload && req.payload.image && req.payload.image.fill) req.payload.image.fill(0);
       if (req.sent) {
@@ -475,7 +535,8 @@
     }
 
     onAiResult(req, raw) {
-      if (this.ai !== req) { // late response after cancel/lock: discard, never display
+      if (!this.aiResultAllowed(req)) { // late response after cancel/lock/new session: discard, never display
+        if (raw && raw.image && raw.image.fill) raw.image.fill(0);
         const e = this.remoteCancels.find(x => x.id === req.id);
         if (e) e.lateResponseDiscarded = true;
         return;
@@ -507,7 +568,7 @@
     }
 
     onAiError(req, err) {
-      if (this.ai !== req) return;
+      if (!this.aiResultAllowed(req)) return;
       this.ai = null;
       if (this.top && this.top.isAi) this.pop();
       const msg = err && err.message ? err.message : String(err);
@@ -795,6 +856,7 @@
         { label: 'Wi-Fi', select: (a) => a.openWifi() },
         { label: 'Req. canceladas', select: (a) => a.push(new V.ReaderView(st, 'Canceladas', a.remoteCancels.length ? a.remoteCancels.map(c => ({ kind: 'text', text: c.id.slice(0, 8) + ' ' + c.reason + ': ' + c.status + (c.lateResponseDiscarded ? ' (resposta tardia descartada)' : '') })) : [{ kind: 'text', text: 'Nenhuma' }], { protected: true })) },
         { label: 'Diagnostico', select: (a) => a.openDiagnostics() },
+        { label: 'Autodiagnostico', select: (a) => a.openSelfTest() },
         { label: 'Atualizacao (OTA)', select: (a) => a.openOta() }
       ];
       return this.push(new V.MenuView(st, 'Ajustes', items, { protected: true }));
@@ -864,6 +926,39 @@
         { kind: 'text', text: 'Plataforma: ' + (this.p.name || '?') }
       ];
       return this.push(new V.ReaderView(S.SETTINGS, 'Diag', blocks, { protected: true }));
+    }
+
+    /* ---------------- self diagnostics (no secrets, no protected content) ---------------- */
+    openSelfTest() {
+      const st = S.SETTINGS;
+      const show = (title, rows) => this.push(new V.ReaderView(st, title, [{ kind: 'title', text: title }, ...rows.map(r => ({ kind: 'text', text: (r.ok === true ? 'OK  ' : r.ok === false ? 'FALHA ' : '--  ') + r.t }))], { protected: true }));
+      const items = [
+        { label: 'LCD (padroes)', select: (a) => a.push(lcdPatternView(st)) },
+        { label: 'Teclado e setas', select: (a) => a.push(keyTestView(st)) },
+        { label: 'Camera / JPEG', select: async (a) => {
+          const cam = a.p.camera;
+          try { await cam.init({ resolution: 'QVGA', quality: 20 }); const img = await cam.capture({ resolution: 'QVGA', quality: 20 });
+            const jpegOk = img.data[0] === 0xFF && img.data[1] === 0xD8; img.data.fill(0); cam.deinit();
+            show('Camera', [{ ok: true, t: 'Sensor iniciado' }, { ok: jpegOk, t: 'Captura JPEG ' + img.width + 'x' + img.height }]);
+          } catch (e) { try { cam.deinit(); } catch (x) { /* ignore */ } show('Camera', [{ ok: false, t: e.message }]); }
+        } },
+        { label: 'Armazenamento', select: (a) => {
+          let ok = false;
+          try { a.p.storage.set('selftest', 'x1'); ok = a.p.storage.get('selftest') === 'x1'; a.p.storage.remove('selftest'); } catch (e) { ok = false; }
+          show('Armazenamento', [{ ok, t: 'Escrita/leitura' }, { ok: !a.vault.corrupt, t: 'Cofre integro' }]);
+        } },
+        { label: 'Wi-Fi e servidor', select: async (a) => {
+          const w = a.p.wifi.status();
+          const rows = [{ ok: w.connected, t: 'Wi-Fi ' + (w.connected ? w.ssid : 'desconectado') }];
+          try { const r = await a.p.ai.status(); rows.push({ ok: !!(r && r.authorized), t: 'Servidor: dispositivo autorizado' }); }
+          catch (e) { rows.push({ ok: false, t: 'Servidor: ' + e.message }); }
+          if (a.top && a.top.state === st) show('Rede', rows);
+        } },
+        { label: 'Bateria', select: (a) => { const b = a.battery(); show('Bateria', [{ ok: b.supported ? !b.low : null, t: b.supported ? b.percent + '%' : 'sem circuito de medicao' }]); } },
+        { label: 'PSRAM / Flash', select: () => show('Memoria', [{ ok: null, t: 'Somente no hardware (firmware)' }]) },
+        { label: 'Tecla ON', select: () => show('Tecla ON', [{ ok: null, t: 'Pressione ON: deve voltar ao modo NORMAL e encerrar a sessao.' }]) }
+      ];
+      return this.push(new V.MenuView(st, 'Autodiagnostico', items, { protected: true }));
     }
 
     openOta() {

@@ -124,11 +124,15 @@
     mockAi.failMode = $('aiFail').value;
     mockAi.latencyMs = Number($('aiLatency').value) || 0;
     if ($('aiSource').value === 'http') {
-      try { platform.ai = new SimPlatform.HttpAI({ baseUrl: $('aiUrl').value, deviceId: $('aiDevice').value, deviceKeyB64: $('aiKey').value }); log('IA: backend real', { url: $('aiUrl').value }); }
+      try {
+        platform.ai = new SimPlatform.HttpAI({ baseUrl: $('aiUrl').value, remoteUrl: $('aiRemote').value, deviceId: $('aiDevice').value, deviceKeyB64: $('aiKey').value,
+          accessClientId: $('aiCfId').value, accessClientSecret: $('aiCfSecret').value });
+        log('IA: servidor domestico', {});
+      }
       catch (e) { log('IA: configuracao invalida', { erro: e.message }); platform.ai = mockAi; }
     } else platform.ai = mockAi;
   }
-  ['aiSource', 'aiFail', 'aiLatency', 'aiUrl', 'aiDevice', 'aiKey'].forEach(id => { $(id).onchange = configureAi; });
+  ['aiSource', 'aiFail', 'aiLatency', 'aiUrl', 'aiRemote', 'aiDevice', 'aiKey', 'aiCfId', 'aiCfSecret'].forEach(id => { $(id).onchange = configureAi; });
 
   $('camFailInit').onchange = (e) => { platform.camera.failInit = e.target.checked; };
   $('camFailCap').onchange = (e) => { platform.camera.failCapture = e.target.checked; };
