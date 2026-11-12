@@ -98,7 +98,7 @@ typedef struct {
     char session_id[AI_REQ_ID_LEN + 1];
 } ai_result_t;
 
-typedef struct {
+typedef struct ai_client {
     ai_client_cfg_t cfg;
     /* current job (written by UI before publishing gen, read by worker) */
     char req_id[AI_REQ_ID_LEN + 1];
