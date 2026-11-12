@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Painel do Terminal Matemático</title>
+<link rel="stylesheet" href="/admin/style.css">
+</head>
+<body>
+<header class="top">
+  <button id="menuBtn" class="ghost" aria-label="Menu">☰</button>
+  <strong>Terminal Matemático · Servidor</strong>
+  <span id="who" class="muted"></span>
+  <button id="logoutBtn" class="ghost hidden">Sair</button>
+</header>
+<nav id="nav" class="nav hidden">
+  <a href="#dashboard">Dashboard</a>
+  <a href="#apps">Aplicativos de IA</a>
+  <a href="#devices">Dispositivos</a>
+  <a href="#settings">Configurações</a>
+  <a href="#history">Histórico e favoritos</a>
+  <a href="#manual">Integração manual</a>
+  <a href="#remote">Acesso remoto</a>
+  <a href="#updates">Atualizações</a>
+  <a href="#security">Segurança</a>
+</nav>
+<main id="main"></main>
+<div id="toast" class="toast hidden" role="status"></div>
+<script src="/admin/app.js"></script>
+</body>
+</html>

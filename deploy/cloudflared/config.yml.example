@@ -1,0 +1,41 @@
+# Cloudflare Tunnel (cloudflared) - exemplo para o servidor domestico.
+# Copie para /etc/cloudflared/config.yml (ou ~/.cloudflared/config.yml do usuario do cloudflared)
+# e troque os valores entre <>. O tunel sai do servidor para a Cloudflare: nenhuma porta
+# precisa ser aberta no roteador (sem encaminhamento de portas).
+#
+# Dois hostnames, ambos protegidos por aplicacoes do Cloudflare Access:
+#   <api.seudominio>    -> somente /api/v1/* (terminal; Access com token de servico)
+#   <painel.seudominio> -> somente /admin*    (proprietario; Access com login + MFA)
+# Qualquer outro caminho recebe 404 da propria Cloudflare.
+
+tunnel: <CLOUDFLARE_TUNNEL_ID>
+credentials-file: /etc/cloudflared/<CLOUDFLARE_TUNNEL_ID>.json
+
+ingress:
+  # API dos dispositivos
+  - hostname: <api.seudominio>
+    path: ^/api/v1/
+    service: http://127.0.0.1:8787     # SERVER_LOCAL_PORT (listener loopback do servidor)
+    originRequest:
+      connectTimeout: 10s
+      noTLSVerify: false
+      # valida o JWT do Access tambem na origem (alem da verificacao feita pelo servidor)
+      access:
+        required: true
+        teamName: <seu-time>
+        audTag:
+          - <CLOUDFLARE_ACCESS_AUD_DEVICE>
+
+  # Painel administrativo
+  - hostname: <painel.seudominio>
+    path: ^/admin
+    service: http://127.0.0.1:8787
+    originRequest:
+      access:
+        required: true
+        teamName: <seu-time>
+        audTag:
+          - <CLOUDFLARE_ACCESS_AUD_ADMIN>
+
+  # Todo o resto: recusado (nunca exponha CLIs, sockets ou outros servicos por aqui)
+  - service: http_status:404

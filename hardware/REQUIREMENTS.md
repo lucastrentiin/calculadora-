@@ -1,0 +1,3 @@
+# REQUIREMENTS
+
+Ver a seção **REQUIREMENTS** em [README.md](README.md).

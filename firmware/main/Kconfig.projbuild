@@ -1,0 +1,152 @@
+menu "Terminal Matematico"
+
+    comment "Hardware ainda nao definido: pinos e controladores NAO tem valores padrao."
+
+    menu "Display"
+        choice MT_DISPLAY_DRIVER
+            prompt "Driver do display"
+            default MT_DISPLAY_CONSOLE
+            config MT_DISPLAY_CONSOLE
+                bool "Espelho ASCII no console serial (bring-up sem LCD)"
+            config MT_DISPLAY_NULL
+                bool "Nenhum (descarta quadros)"
+        endchoice
+        config MT_DISPLAY_WIDTH
+            int "Largura em pixels"
+            default 128
+        config MT_DISPLAY_HEIGHT
+            int "Altura em pixels"
+            default 32
+        comment "Driver do controlador LCD definitivo: implementar display_driver_t (hardware/DISPLAY.md)."
+    endmenu
+
+    menu "Teclado"
+        choice MT_KEYPAD_DRIVER
+            prompt "Driver do teclado"
+            default MT_KEYPAD_CONSOLE
+            config MT_KEYPAD_CONSOLE
+                bool "Console serial (bring-up)"
+            config MT_KEYPAD_MATRIX
+                bool "Matriz por GPIO"
+        endchoice
+        config MT_KEYPAD_ROW_GPIOS
+            string "GPIOs das linhas (ex.: 4,5,6) - entradas com pull-up"
+            default ""
+            depends on MT_KEYPAD_MATRIX
+        config MT_KEYPAD_COL_GPIOS
+            string "GPIOs das colunas (ex.: 7,8,9) - saidas open-drain"
+            default ""
+            depends on MT_KEYPAD_MATRIX
+        config MT_KEYPAD_KEYMAP
+            string "Mapa de teclas (nomes, ordem linha-maior, ex.: ON,SHIFT,...)"
+            default ""
+            depends on MT_KEYPAD_MATRIX
+        config MT_KEYPAD_ON_GPIO
+            int "GPIO dedicado da tecla ON (-1 = dentro da matriz)"
+            default -1
+            depends on MT_KEYPAD_MATRIX
+    endmenu
+
+    menu "Backend / IA"
+        config MT_BACKEND_URL
+            string "URL do servidor domestico na rede local (https://IP-ou-nome:porta)"
+            default ""
+            help
+                Tentada primeiro. Pode ser sobrescrita pela chave NVS "lan_url".
+        config MT_BACKEND_REMOTE_URL
+            string "URL remota (subdominio do Cloudflare Tunnel, https://...)"
+            default ""
+            help
+                Usada somente quando a URL local falha ANTES do envio (nunca reenvia
+                uma requisicao ja enviada). Pode ser sobrescrita pela chave NVS "remote_url".
+                Token de servico do Cloudflare Access (opcional) vem das chaves NVS
+                "cf_id" e "cf_secret" (provisionamento), nunca do codigo-fonte.
+        config MT_BACKEND_PINNED_CA
+            bool "Usar CA fixada (certs/backend_ca.pem) em vez do bundle de CAs"
+            default n
+        config MT_ALLOW_HTTP
+            bool "Permitir http:// (somente desenvolvimento)"
+            default n
+        config MT_AI_TIMEOUT_MS
+            int "Timeout total da consulta (ms)"
+            default 90000
+    endmenu
+
+    menu "Camera"
+        config MT_CAMERA_ENABLE
+            bool "Habilitar camera (esp32-camera)"
+            default n
+        config MT_CAM_PIN_PWDN
+            int "PWDN (-1 se nao usado)"
+            default -1
+            depends on MT_CAMERA_ENABLE
+        config MT_CAM_PIN_RESET
+            int "RESET (-1 se nao usado)"
+            default -1
+            depends on MT_CAMERA_ENABLE
+        config MT_CAM_PIN_XCLK
+            int "XCLK"
+            default -1
+            depends on MT_CAMERA_ENABLE
+        config MT_CAM_PIN_SIOD
+            int "SCCB SDA"
+            default -1
+            depends on MT_CAMERA_ENABLE
+        config MT_CAM_PIN_SIOC
+            int "SCCB SCL"
+            default -1
+            depends on MT_CAMERA_ENABLE
+        config MT_CAM_PIN_DATA
+            string "D0..D7 (8 GPIOs separados por virgula)"
+            default ""
+            depends on MT_CAMERA_ENABLE
+        config MT_CAM_PIN_VSYNC
+            int "VSYNC"
+            default -1
+            depends on MT_CAMERA_ENABLE
+        config MT_CAM_PIN_HREF
+            int "HREF"
+            default -1
+            depends on MT_CAMERA_ENABLE
+        config MT_CAM_PIN_PCLK
+            int "PCLK"
+            default -1
+            depends on MT_CAMERA_ENABLE
+        config MT_CAM_XCLK_HZ
+            int "Frequencia XCLK (Hz) - conforme datasheet do modulo"
+            default 0
+            depends on MT_CAMERA_ENABLE
+        config MT_CAM_PREVIEW
+            bool "Previa local no celular (servidor HTTP na rede local)"
+            default n
+            depends on MT_CAMERA_ENABLE
+    endmenu
+
+    menu "Energia"
+        config MT_BATTERY_ADC
+            bool "Existe divisor resistivo da bateria ligado a um ADC"
+            default n
+        config MT_BATTERY_ADC_CHANNEL
+            int "Canal ADC1"
+            default -1
+            depends on MT_BATTERY_ADC
+        config MT_BATTERY_DIV_NUM
+            int "Divisor: numerador (Vbat = Vadc * NUM / DEN)"
+            default 0
+            depends on MT_BATTERY_ADC
+        config MT_BATTERY_DIV_DEN
+            int "Divisor: denominador"
+            default 1
+            depends on MT_BATTERY_ADC
+    endmenu
+
+    menu "Seguranca"
+        config MT_PBKDF2_ITERATIONS
+            int "Iteracoes PBKDF2 do PIN (medir no hardware: alvo 0,5-1 s)"
+            default 60000
+        config MT_OTA_ENABLE
+            bool "Atualizacao OTA pelo servidor domestico (/api/v1/updates)"
+            default y
+    endmenu
+
+endmenu

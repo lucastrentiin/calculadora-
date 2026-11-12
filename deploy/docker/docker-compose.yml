@@ -1,0 +1,30 @@
+# docker compose -f deploy/docker/docker-compose.yml up -d --build   (executar na raiz do projeto)
+# O servidor fica acessivel SOMENTE pelo cloudflared (rede interna) e por 127.0.0.1 do host.
+services:
+  server:
+    build: { context: ../.., dockerfile: deploy/docker/Dockerfile }
+    restart: unless-stopped
+    env_file: ../env/production.env        # copie de production.env.example e ajuste
+    environment:
+      SERVER_LOCAL_HOST: 0.0.0.0           # dentro do container; a publicacao abaixo e apenas loopback
+    ports:
+      - "127.0.0.1:8787:8787"
+    volumes:
+      - mtdata:/data
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    mem_limit: 768m
+    pids_limit: 128
+
+  # Opcional: cloudflared no mesmo compose (credenciais do tunel montadas somente leitura).
+  # cloudflared:
+  #   image: cloudflare/cloudflared:<versao-fixa>   # fixe uma versao publicada (nao use latest)
+  #   command: tunnel --no-autoupdate --config /etc/cloudflared/config.yml run
+  #   volumes: ["/etc/cloudflared:/etc/cloudflared:ro"]
+  #   restart: unless-stopped
+  #   # no config.yml use service: http://server:8787
+
+volumes:
+  mtdata:

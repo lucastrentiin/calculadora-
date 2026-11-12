@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Terminal Matemático – Simulador</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<main class="wrap">
+  <section class="device" aria-label="Dispositivo simulado">
+    <div class="brand">TERMINAL MATEMÁTICO <span id="stateBadge" class="badge">NORMAL</span></div>
+    <div class="lcd-frame"><canvas id="lcd" width="128" height="32" aria-label="Visor LCD 128x32"></canvas></div>
+    <div class="keypad" id="keypad"></div>
+  </section>
+
+  <section class="panel">
+    <details open>
+      <summary>Painel de simulação</summary>
+      <p class="note">Tudo neste painel é <b>simulado</b>. Rede, câmera, bateria e OTA reais só existem no firmware ESP32-S3.</p>
+      <div class="grid">
+        <label>Estado <output id="stateOut">NORMAL</output></label>
+        <label>Último bloqueio <output id="lockOut">–</output></label>
+        <label><input type="checkbox" id="wifiOn" checked> Wi-Fi conectado</label>
+        <label><input type="checkbox" id="batSupported" checked> Circuito de bateria presente</label>
+        <label>Bateria <input type="range" id="batLevel" min="0" max="100" value="80"> <output id="batOut">80%</output></label>
+        <label><input type="checkbox" id="batCharging"> Carregando</label>
+      </div>
+    </details>
+
+    <details>
+      <summary>IA</summary>
+      <div class="grid">
+        <label>Fonte
+          <select id="aiSource"><option value="mock">IA simulada (local)</option><option value="http">Servidor doméstico real (protocolo mt1)</option></select></label>
+        <label>Falha simulada
+          <select id="aiFail">
+            <option value="none">nenhuma</option><option value="offline">servidor inacessível</option><option value="timeout">timeout</option>
+            <option value="http500">erro 5xx</option><option value="invalid">JSON incompleto</option><option value="garbage">resposta não-JSON</option>
+            <option value="huge">resposta enorme</option><option value="refused">recusa</option><option value="mismatch">resultado divergente</option><option value="tls">falha de TLS</option><option value="provider_down">Claude indisponível</option><option value="no_credits">API sem créditos</option>
+          </select></label>
+        <label>Latência (ms) <input type="number" id="aiLatency" value="1500" min="0" step="100"></label>
+        <label>URL local (LAN) <input id="aiUrl" placeholder="https://192.168.x.x:8443"></label>
+        <label>URL remota (Cloudflare) <input id="aiRemote" placeholder="https://calc.seudominio"></label>
+        <label>Access Client ID (opcional) <input id="aiCfId" autocomplete="off"></label>
+        <label>Access Client Secret (opcional) <input id="aiCfSecret" type="password" autocomplete="off"></label>
+        <label>Device ID <input id="aiDevice" placeholder="dev-001"></label>
+        <label>Chave do dispositivo (base64) <input id="aiKey" type="password" autocomplete="off"></label>
+      </div>
+    </details>
+
+    <details>
+      <summary>Câmera e prévia no celular</summary>
+      <div class="grid">
+        <label><input type="checkbox" id="camFailInit"> Falha na inicialização</label>
+        <label><input type="checkbox" id="camFailCap"> Falha na captura</label>
+        <label><input type="checkbox" id="camWebcam"> Usar webcam do computador</label>
+        <label>Texto da imagem sintética <input id="camText" value="2x^2-5x+3=0"></label>
+      </div>
+      <div id="preview" class="preview hidden">
+        <div class="pv-head">Página local (simulada) · sessão <b id="pvCode"></b> <span class="dot"></span></div>
+        <canvas id="pvCanvas" width="320" height="240"></canvas>
+        <button id="pvCapture" class="btn">Capturar</button>
+        <p class="note">No hardware: servidor HTTP no ESP32 acessível só na rede local, com token de sessão e expiração. Ver docs/CAMERA_PREVIEW.md.</p>
+      </div>
+    </details>
+
+    <details>
+      <summary>Energia, OTA e dados</summary>
+      <div class="grid">
+        <label>Versão OTA disponível <input id="otaVer" placeholder="ex.: 0.2.0"></label>
+        <label><input type="checkbox" id="otaFail"> Falha de assinatura na OTA</label>
+        <button id="btnReset" class="btn">Apagar dados do simulador</button>
+        <button id="btnSelftest" class="btn">Executar autoteste</button>
+      </div>
+      <pre id="selftestOut" class="log"></pre>
+    </details>
+
+    <details>
+      <summary>Teclado do computador</summary>
+      <p class="note">Números e operadores · Enter = · Backspace DEL · Esc AC · Setas · F1 ON · F2 SHIFT · F3 ALPHA · F4 MODE · F6 MENU · Insert M+ ·
+        s/c/t sin cos tan · g log · l ln · p π · r √ · q x² · e ×10ˣ · x variável · a Ans. Na digitação de texto, letras vão direto.<br>
+        Acesso protegido (padrão): SHIFT SHIFT ALPHA ALPHA, depois o PIN e =. Na primeira vez é pedido para criar o PIN.</p>
+    </details>
+
+    <details>
+      <summary>Registro de eventos (sem dados sensíveis)</summary>
+      <pre id="log" class="log"></pre>
+    </details>
+  </section>
+</main>
+
+<script src="js/core/font.js"></script>
+<script src="js/core/framebuffer.js"></script>
+<script src="js/core/mathEngine.js"></script>
+<script src="js/core/solvers.js"></script>
+<script src="js/core/units.js"></script>
+<script src="js/core/formulas.js"></script>
+<script src="js/core/textLayout.js"></script>
+<script src="js/core/textInput.js"></script>
+<script src="js/core/keys.js"></script>
+<script src="js/core/auth.js"></script>
+<script src="js/core/aiResponse.js"></script>
+<script src="js/core/views.js"></script>
+<script src="js/core/sciCalc.js"></script>
+<script src="js/core/app.js"></script>
+<script src="js/sim/platform.js"></script>
+<script src="js/sim/selftest.js"></script>
+<script src="js/ui/main.js"></script>
+</body>
+</html>
