@@ -102,6 +102,10 @@ struct app {
     uint32_t ai_gen;
     char ai_question[160];
     resp_mode_t ai_mode;
+    char session_id[33];        /* new random id per authenticated session; AI results must match it */
+    struct { char id[24], label[16]; } providers[6];
+    int nproviders;
+    uint8_t aux_job;            /* 0 none, 1 config fetch, 2 diagnostics upload */
     /* feedback */
     char flash[24];
     uint32_t flash_until;

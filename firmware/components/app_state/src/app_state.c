@@ -95,6 +95,7 @@ static void hook_ui(void *ctx, pl_reason_t r)
     a->pinlen = 0;
     atomic_fetch_add(&a->job.token, 1); /* late PBKDF2 results are ignored */
     a->session = false;
+    sec_wipe(a->session_id, sizeof(a->session_id));
     a->shift = a->alpha = false;
     if (a->p.request_flush) a->p.request_flush();
 }
@@ -182,6 +183,9 @@ static void start_auth_job(app_t *a, const char *pin, size_t len, bool setup)
 
 static void open_session(app_t *a)
 {
+    uint8_t r[16];
+    sec_random(r, sizeof(r));
+    sec_hex(r, sizeof(r), a->session_id); /* results of earlier sessions can never be shown */
     a->session = true;
     a->last_activity = app_now(a);
     vault_open(&a->vault, a->p.kv, a->job.key);
@@ -334,6 +338,7 @@ void app_tick(app_t *a)
     if (a->session && now - a->last_activity > (uint32_t)a->set.auto_lock_s * 1000u) app_privacy_lock(a, PL_REASON_INACTIVITY, 0);
     view_t *top = app_top(a);
     if (top && top->tick) top->tick(top, a);
+    if (a->aux_job) screens_aux_tick(a);
     battery_reading_t bat = {0};
     bool have_bat = a->p.battery && a->p.battery(&bat);
     a->pm.pol.sleep_s = a->set.sleep_s;

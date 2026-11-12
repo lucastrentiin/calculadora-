@@ -20,12 +20,13 @@ void settings_defaults(settings_t *s)
     s->auth_combo = COMBO_SSAA;
     s->jpeg_quality = 12;
     s->resolution = 2; /* SVGA */
+    strcpy(s->ai_provider, "auto");
 }
 
 static bool valid(const settings_t *s)
 {
     return s->version == SETTINGS_VERSION && s->response_mode <= RESP_FULL && (s->text_method == 'A' || s->text_method == 'B') &&
-           s->angle_deg <= 2 && s->calc_mode <= 2 && s->calc_reg <= 5 && s->calc_disp <= 3 && s->calc_digits <= 9 &&
+           s->angle_deg <= 2 && memchr(s->ai_provider, 0, sizeof(s->ai_provider)) != NULL && s->calc_mode <= 2 && s->calc_reg <= 5 && s->calc_disp <= 3 && s->calc_digits <= 9 &&
            s->scroll_step >= 1 && s->scroll_step <= 3 && s->key_repeat <= 3 && s->auth_combo < COMBO_COUNT &&
            s->multitap_ms >= 300 && s->multitap_ms <= 3000 && s->auto_lock_s >= 15 && s->resolution < 6;
 }

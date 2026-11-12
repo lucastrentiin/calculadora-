@@ -49,8 +49,18 @@ menu "Terminal Matematico"
 
     menu "Backend / IA"
         config MT_BACKEND_URL
-            string "URL base do backend (https://...)"
+            string "URL do servidor domestico na rede local (https://IP-ou-nome:porta)"
             default ""
+            help
+                Tentada primeiro. Pode ser sobrescrita pela chave NVS "lan_url".
+        config MT_BACKEND_REMOTE_URL
+            string "URL remota (subdominio do Cloudflare Tunnel, https://...)"
+            default ""
+            help
+                Usada somente quando a URL local falha ANTES do envio (nunca reenvia
+                uma requisicao ja enviada). Pode ser sobrescrita pela chave NVS "remote_url".
+                Token de servico do Cloudflare Access (opcional) vem das chaves NVS
+                "cf_id" e "cf_secret" (provisionamento), nunca do codigo-fonte.
         config MT_BACKEND_PINNED_CA
             bool "Usar CA fixada (certs/backend_ca.pem) em vez do bundle de CAs"
             default n
@@ -134,9 +144,9 @@ menu "Terminal Matematico"
         config MT_PBKDF2_ITERATIONS
             int "Iteracoes PBKDF2 do PIN (medir no hardware: alvo 0,5-1 s)"
             default 60000
-        config MT_OTA_MANIFEST_URL
-            string "URL do manifesto OTA (https://...)"
-            default ""
+        config MT_OTA_ENABLE
+            bool "Atualizacao OTA pelo servidor domestico (/api/v1/updates)"
+            default y
     endmenu
 
 endmenu

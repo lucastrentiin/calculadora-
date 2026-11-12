@@ -36,6 +36,7 @@ static void boot(bool with_pin)
     p.kv = KV; p.ai = &AI; p.cam = &g_camhal; p.wifi = &g_wifihal; p.battery = fake_battery; p.now_ms = fake_now_ms; p.log = fake_log;
     auth_default_policy(&p.auth_policy); p.auth_policy.iterations = 1000; p.width = 128; p.height = 32;
     app_init(&A, &p);
+    A.set.ai_notice_ack = true; /* covered by its own test below */
     fb_init(&FB, 128, 32, FBM, sizeof FBM);
     if (with_pin) {
         keys(COMBO, 4); keys(PIN, 6); K(KEY_DOWN); keys(PIN, 6); K(KEY_EQ);
@@ -119,7 +120,7 @@ static void reach(app_state_id_t st)
     case ST_AI_RESPONSE: K(KEY_K1); K(KEY_K2); app_key(&A, KEY_SHIFT); K(KEY_EQ); pump(); break;
     case ST_CAMERA: K(KEY_K2); break;
     case ST_MATH_TOOLS: K(KEY_K3); break;
-    case ST_SETTINGS: K(KEY_K7); break;
+    case ST_SETTINGS: K(KEY_K8); break;
     default: break;
     }
 }
@@ -199,7 +200,7 @@ TEST(camera_errors_and_capture) {
     CHECK_INT(app_state(&A), ST_AI_REQUEST);
     pump();
     CHECK_INT(app_state(&A), ST_AI_RESPONSE);
-    CHECK(strstr(g_net.last_url, "/v1/image") != NULL);
+    CHECK(strstr(g_net.last_url, "/api/v1/ai/vision") != NULL);
 }
 
 TEST(inactivity_battery_and_sleep) {
@@ -237,13 +238,42 @@ TEST(storage_failure_is_survivable) {
 
 TEST(settings_large_font_and_menus) {
     boot(true);
-    login(); K(KEY_K7);
+    login(); K(KEY_K8);
     K(KEY_DOWN); K(KEY_DOWN); K(KEY_EQ); CHECK(A.set.large_font);
     app_render(&A, &FB);
     K(KEY_AC); K(KEY_AC); CHECK_INT(app_state(&A), ST_NORMAL); /* leaving the root menu locks */
 }
 
-TEST_MAIN(RUN(normal_calculator_offline); RUN(first_use_creates_pin_no_default); RUN(discreet_auth_indicator_only); RUN(auth_timeout_and_passthrough);
+TEST(privacy_notice_assistant_and_session_binding) {
+    boot(true);
+    A.set.ai_notice_ack = false;
+    login();
+    K(KEY_K1); /* Perguntar -> privacy notice first */
+    CHECK_INT(app_state(&A), ST_AUTHENTICATED); CHECK(!A.set.ai_notice_ack);
+    K(KEY_EQ); CHECK(A.set.ai_notice_ack); CHECK_INT(app_state(&A), ST_TEXT_ENTRY);
+    K(KEY_AC); CHECK_INT(app_state(&A), ST_AUTHENTICATED);
+    /* assistant: fetch providers from the server and choose one */
+    g_net.reply = "{\"protocol\":\"mt1\",\"providers\":[{\"id\":\"auto\",\"label\":\"AUTOMATICO\"},{\"id\":\"claude_code\",\"label\":\"CLAUDE\"}]}";
+    K(KEY_K7); K(KEY_K2); pump();
+    CHECK_INT(A.nproviders, 2);
+    K(KEY_K1); CHECK_STR(A.set.ai_provider, "claude_code");
+    CHECK(strstr(g_net.last_url, "/api/v1/device/config") != NULL);
+    K(KEY_AC);
+    /* a result produced for a previous session is never shown */
+    char old[33]; memcpy(old, A.session_id, sizeof old);
+    g_net.reply = "{\"version\":1,\"status\":\"ok\",\"answer\":\"segredo\"}";
+    K(KEY_K1); K(KEY_K2); app_key(&A, KEY_SHIFT); K(KEY_EQ);
+    while (ai_client_run_pending(&AI)) {}
+    CHECK(strstr(g_net.last_body, old) != NULL);              /* request carries the session id */
+    CHECK(strstr(g_net.last_body, "claude_code") != NULL);    /* and the chosen provider */
+    memset(A.session_id, 'x', 32);                             /* simulate a new session before the UI polls */
+    app_tick(&A);
+    CHECK_INT(app_state(&A), ST_AI_REQUEST);                   /* still waiting: foreign result discarded */
+    K(KEY_ON); CHECK_INT(app_state(&A), ST_NORMAL);
+    CHECK(A.session_id[0] == 0);
+}
+
+TEST_MAIN(RUN(normal_calculator_offline); RUN(privacy_notice_assistant_and_session_binding); RUN(first_use_creates_pin_no_default); RUN(discreet_auth_indicator_only); RUN(auth_timeout_and_passthrough);
           RUN(lockout_after_wrong_pins); RUN(privacy_lock_from_every_protected_state); RUN(ai_cancel_after_send_via_privacy_lock);
           RUN(full_ai_flow_history_and_favorite); RUN(wifi_off_and_offline_tools); RUN(camera_errors_and_capture); RUN(inactivity_battery_and_sleep);
           RUN(text_entry_methods_preserve_text); RUN(storage_failure_is_survivable); RUN(settings_large_font_and_menus);

@@ -22,8 +22,8 @@ void screens_message(app_t *a, app_state_id_t st, const char *title, const char 
 
 /* ------------------------------ protected menu --------------------- */
 
-static const char *const PM_ITEMS[] = {"Perguntar (texto)", "Camera", "Ferramentas", "Favoritos", "Historico", "Modo resposta", "Ajustes", "Bloquear"};
-static int pm_count(app_t *a, menu_view_t *m) { (void)a; (void)m; return 8; }
+static const char *const PM_ITEMS[] = {"Perguntar (texto)", "Camera", "Ferramentas", "Favoritos", "Historico", "Modo resposta", "Assistente", "Ajustes", "Bloquear"};
+static int pm_count(app_t *a, menu_view_t *m) { (void)a; (void)m; return 9; }
 static void pm_label(app_t *a, menu_view_t *m, int i, char *b, size_t l) { (void)a; (void)m; snprintf(b, l, "%s", PM_ITEMS[i]); }
 static void pm_value(app_t *a, menu_view_t *m, int i, char *b, size_t l) { (void)m; b[0] = 0; if (i == 5) snprintf(b, l, "%s", settings_mode_name(a->set.response_mode)); }
 static bool pm_cycle(app_t *a, menu_view_t *m, int i, int dir)
@@ -38,15 +38,128 @@ static void pm_select(app_t *a, menu_view_t *m, int i)
 {
     (void)m;
     switch (i) {
-    case 0: screens_open_question(a); break;
-    case 1: screens_open_camera(a); break;
+    case 0: case 1:
+        if (!a->set.ai_notice_ack) { screens_privacy_notice(a, i); break; }
+        if (i == 0) screens_open_question(a); else screens_open_camera(a);
+        break;
     case 2: app_open_tools(a, true); break;
     case 3: screens_open_favorites(a); break;
     case 4: screens_open_history(a); break;
-    case 6: screens_open_settings(a); break;
-    case 7: app_privacy_lock(a, PL_REASON_MENU, 0); break;
+    case 6: screens_open_assistant(a); break;
+    case 7: screens_open_settings(a); break;
+    case 8: app_privacy_lock(a, PL_REASON_MENU, 0); break;
     default: break;
     }
+}
+
+/* ------------------------------ privacy notice / assistant --------- */
+
+#define PRIVACY_TEXT "Perguntas e imagens enviadas a um provedor externo sao processadas por esse servico segundo as politicas dele. " \
+                     "O terminal nao guarda senhas nem chaves de IA. Pressione = para concordar ou AC para voltar."
+
+static void notice_enter(app_t *a, reader_view_t *r)
+{
+    int next = (int)r->arg;
+    a->set.ai_notice_ack = true;
+    app_save_settings(a);
+    app_pop(a);
+    if (next == 0) screens_open_question(a); else if (next == 1) screens_open_camera(a);
+}
+
+void screens_privacy_notice(app_t *a, int next)
+{
+    reader_view_t *r = reader_new(ST_AUTHENTICATED, true);
+    if (!r) return;
+    r->arg = next;
+    r->on_enter = notice_enter;
+    doc_add(&r->doc, DOC_TITLE, "Aviso de privacidade", NULL);
+    doc_add(&r->doc, DOC_TEXT, PRIVACY_TEXT, NULL);
+    app_push(a, &r->base);
+}
+
+static int as_count(app_t *a, menu_view_t *m) { (void)a; (void)m; return 4; }
+static void as_label(app_t *a, menu_view_t *m, int i, char *b, size_t l)
+{
+    (void)a; (void)m;
+    static const char *const L[] = {"Provedor", "Atualizar lista", "Aviso de privacidade", "Status do servidor"};
+    snprintf(b, l, "%s", L[i]);
+}
+static const char *provider_label(const app_t *a, const char *id)
+{
+    for (int i = 0; i < a->nproviders; i++) if (!strcmp(a->providers[i].id, id)) return a->providers[i].label;
+    return strcmp(id, "auto") ? id : "AUTOMATICO";
+}
+static void as_value(app_t *a, menu_view_t *m, int i, char *b, size_t l)
+{
+    (void)m;
+    b[0] = 0;
+    if (i == 0) snprintf(b, l, "%s", provider_label(a, a->set.ai_provider));
+}
+static bool as_cycle(app_t *a, menu_view_t *m, int i, int dir)
+{
+    (void)m;
+    if (i != 0) return false;
+    if (a->nproviders == 0) { app_flash(a, "Atualize a lista"); return true; }
+    int cur = 0;
+    for (int k = 0; k < a->nproviders; k++) if (!strcmp(a->providers[k].id, a->set.ai_provider)) cur = k;
+    cur = (cur + (dir < 0 ? a->nproviders - 1 : 1)) % a->nproviders;
+    snprintf(a->set.ai_provider, sizeof(a->set.ai_provider), "%s", a->providers[cur].id);
+    app_save_settings(a);
+    return true;
+}
+static void as_select(app_t *a, menu_view_t *m, int i)
+{
+    switch (i) {
+    case 0: as_cycle(a, m, 0, 1); break;
+    case 1: case 3:
+        if (!a->p.ai) { screens_message(a, ST_SETTINGS, "Assistente", "Cliente de IA nao configurado neste firmware."); return; }
+        if (!ai_client_aux_start(a->p.ai, "GET", i == 1 ? "/api/v1/device/config" : "/api/v1/device/status", NULL)) { app_flash(a, "Aguarde"); return; }
+        a->aux_job = i == 1 ? 1 : 3;
+        if (a->p.wake_worker) a->p.wake_worker();
+        app_flash(a, "Consultando...");
+        break;
+    case 2: screens_privacy_notice(a, -1); break;
+    default: break;
+    }
+}
+
+void screens_open_assistant(app_t *a)
+{
+    menu_view_t *m = menu_new(ST_SETTINGS, true, "Assistente");
+    if (!m) return;
+    m->count = as_count; m->label = as_label; m->value = as_value; m->cycle = as_cycle; m->select = as_select;
+    app_push(a, &m->base);
+}
+
+/* Called from app_tick while an auxiliary request is pending. */
+void screens_aux_tick(app_t *a)
+{
+    char *resp = NULL;
+    size_t len = 0;
+    int st = 0;
+    if (!a->p.ai) { a->aux_job = 0; return; }
+    ai_aux_state_t s = ai_client_aux_poll(a->p.ai, &resp, &len, &st);
+    if (s == AI_AUX_PENDING || s == AI_AUX_IDLE) { free(resp); return; }
+    uint8_t job = a->aux_job;
+    a->aux_job = 0;
+    if (s == AI_AUX_FAILED) {
+        app_flash(a, job == 2 ? "Envio falhou" : st == 401 ? "Nao autorizado" : "Servidor indisponivel");
+    } else if (job == 1) {
+        cJSON *o = cJSON_ParseWithLength(resp, len);
+        cJSON *arr = cJSON_GetObjectItem(o, "providers"), *it;
+        a->nproviders = 0;
+        cJSON_ArrayForEach(it, arr) {
+            cJSON *id = cJSON_GetObjectItem(it, "id"), *lb = cJSON_GetObjectItem(it, "label");
+            if (!cJSON_IsString(id) || a->nproviders >= 6) continue;
+            snprintf(a->providers[a->nproviders].id, sizeof(a->providers[0].id), "%s", id->valuestring);
+            snprintf(a->providers[a->nproviders].label, sizeof(a->providers[0].label), "%s", cJSON_IsString(lb) ? lb->valuestring : id->valuestring);
+            a->nproviders++;
+        }
+        cJSON_Delete(o);
+        app_flash(a, a->nproviders ? "Lista atualizada" : "Sem provedores");
+    } else if (job == 2) app_flash(a, "Diagnostico enviado");
+    else app_flash(a, "Servidor OK");
+    free(resp);
 }
 static void pm_back(app_t *a, menu_view_t *m) { (void)m; app_privacy_lock(a, PL_REASON_MENU, 0); } /* leaving the root ends the session */
 
@@ -76,7 +189,7 @@ static void question_submit(app_t *a, editor_view_t *e, const char *text)
         return;
     }
     a->ai_mode = (resp_mode_t)a->set.response_mode;
-    uint32_t g = ai_client_start_text(a->p.ai, q, a->ai_mode);
+    uint32_t g = ai_client_start_text(a->p.ai, q, a->ai_mode, a->session_id, a->set.ai_provider);
     snprintf(a->ai_question, sizeof(a->ai_question), "%.159s", q);
     sec_wipe(q, sizeof(q));
     if (!g) { screens_message(a, ST_AI_RESPONSE, "Ocupado", "Aguarde a requisicao anterior terminar."); return; }
@@ -105,14 +218,24 @@ void screens_ai_result(app_t *a, busy_view_t *b)
 {
     ai_result_t res;
     if (!a->p.ai || !ai_client_poll(a->p.ai, b->gen, &res)) return;
+    if (!a->session || strcmp(res.session_id, a->session_id) != 0) { ai_client_free_result(&res); return; } /* other session: never shown */
     app_pop(a); /* busy view */
     reader_view_t *r = reader_new(ST_AI_RESPONSE, true);
     if (!r) { ai_client_free_result(&res); return; }
     snprintf(r->extra, sizeof(r->extra), "%.40s", a->ai_question);
     if (res.kind != AI_RESULT_OK) {
         char msg[160];
-        if (res.kind == AI_RESULT_TRANSPORT_ERROR) snprintf(msg, sizeof(msg), "Falha de rede ou TLS.");
-        else snprintf(msg, sizeof(msg), "Servidor respondeu HTTP %d.", res.http_status);
+        if (res.kind == AI_RESULT_TRANSPORT_ERROR) snprintf(msg, sizeof(msg), "Falha de rede ou TLS (servidor local e remoto).");
+        else {
+            /* mt1 errors: {"error":{"code","message"}} */
+            cJSON *o = res.body ? cJSON_ParseWithLength(res.body, res.body_len) : NULL;
+            cJSON *er = cJSON_GetObjectItem(o, "error");
+            cJSON *em = cJSON_GetObjectItem(er, "message"), *ec = cJSON_GetObjectItem(er, "code");
+            if (cJSON_IsString(em)) snprintf(msg, sizeof(msg), "%.100s (%.24s, HTTP %d)", em->valuestring, cJSON_IsString(ec) ? ec->valuestring : "-", res.http_status);
+            else if (res.http_status == 504) snprintf(msg, sizeof(msg), "Tempo de espera esgotado; a requisicao pode ser cancelada.");
+            else snprintf(msg, sizeof(msg), "Servidor respondeu HTTP %d.", res.http_status);
+            cJSON_Delete(o);
+        }
         doc_add(&r->doc, DOC_TITLE, "Falha na consulta", NULL);
         doc_add(&r->doc, DOC_TEXT, msg, NULL);
         doc_add(&r->doc, DOC_TEXT, res.was_sent ? "O servidor pode ter recebido a solicitacao." : "A solicitacao nao foi enviada.", NULL);
@@ -158,7 +281,8 @@ static void cam_send(app_t *a, camera_view_t *c)
     }
     a->ai_mode = (resp_mode_t)a->set.response_mode;
     snprintf(a->ai_question, sizeof(a->ai_question), "(imagem da camera)");
-    uint32_t g = ai_client_start_image(a->p.ai, img.data, img.len, "Analise o conteudo matematico da imagem.", a->ai_mode);
+    uint32_t g = ai_client_start_image(a->p.ai, img.data, img.len, "Analise o conteudo matematico da imagem.", a->ai_mode, a->session_id,
+                                       a->set.ai_provider);
     if (!g) { screens_message(a, ST_AI_RESPONSE, "Ocupado", "Aguarde a requisicao anterior terminar."); return; }
     a->ai_gen = g;
     if (a->p.wake_worker) a->p.wake_worker();
@@ -881,6 +1005,33 @@ static void set_select(app_t *a, menu_view_t *m, int i)
         snprintf(line, sizeof(line), "Bloqueio: ultimo %lu us, max %lu us (n=%lu)", (unsigned long)ps.last_us, (unsigned long)ps.max_us, (unsigned long)ps.count);
         doc_add(&r->doc, DOC_TEXT, line, NULL);
         if (a->p.ota) { snprintf(line, sizeof(line), "Firmware: %s", a->p.ota->current_version(a->p.ota)); doc_add(&r->doc, DOC_TEXT, line, NULL); }
+        /* the same results go to the owner's server (no PIN, question, image or key is included) */
+        if (a->p.ai && !a->aux_job) {
+            cJSON *o = cJSON_CreateObject(), *res = cJSON_AddArrayToObject(o, "results");
+            if (a->p.ota) cJSON_AddStringToObject(o, "firmware", a->p.ota->current_version(a->p.ota));
+            struct { const char *t; bool ok; const char *d; } R[] = {
+                {"battery", hb, hb ? "medicao ok" : "sem circuito"},
+                {"wifi", a->p.wifi && a->p.wifi->state(a->p.wifi) == WIFI_ST_CONNECTED, NULL},
+                {"camera", a->p.cam != NULL, a->p.cam ? a->p.cam->diag(a->p.cam) : "ausente"},
+                {"storage", a->p.kv != NULL, NULL},
+                {"privacy_lock", ps.max_us < 100000u, ps.count ? "medido" : "nao medido"},
+            };
+            for (size_t k = 0; k < sizeof(R) / sizeof(R[0]); k++) {
+                cJSON *it = cJSON_CreateObject();
+                cJSON_AddStringToObject(it, "test", R[k].t);
+                cJSON_AddBoolToObject(it, "ok", R[k].ok);
+                if (R[k].d) { char d[120]; snprintf(d, sizeof(d), "%.119s", R[k].d); cJSON_AddStringToObject(it, "detail", d); }
+                cJSON_AddItemToArray(res, it);
+            }
+            char *j = cJSON_PrintUnformatted(o);
+            cJSON_Delete(o);
+            if (j && ai_client_aux_start(a->p.ai, "POST", "/api/v1/device/diagnostics", j)) {
+                a->aux_job = 2;
+                if (a->p.wake_worker) a->p.wake_worker();
+                doc_add(&r->doc, DOC_TEXT, "Enviando resultado ao servidor...", NULL);
+            }
+            free(j);
+        }
         app_push(a, &r->base);
         break;
     }

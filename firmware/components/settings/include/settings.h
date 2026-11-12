@@ -57,6 +57,9 @@ typedef struct {
     /* NORMAL-mode calculator (MODE menus), see calculator.h */
     uint8_t calc_mode, calc_reg, calc_disp, calc_digits;
     bool calc_frac_dc, calc_dec_comma;
+    /* assistant */
+    bool ai_notice_ack;      /* owner acknowledged the external-provider privacy notice */
+    char ai_provider[24];    /* "auto" or a provider id offered by GET /api/v1/device/config */
 } settings_t;
 
 void settings_defaults(settings_t *s);

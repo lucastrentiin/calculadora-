@@ -19,6 +19,7 @@ uint32_t app_now(const app_t *a);
 void app_flash(app_t *a, const char *msg);
 void app_save_settings(app_t *a);
 void calc_cfg_from_settings(app_t *a);
+void screens_aux_tick(app_t *a);
 void calc_cfg_to_settings(app_t *a);
 
 /* ------------------------------ menu ------------------------------ */
@@ -114,6 +115,8 @@ view_t *screens_protected_menu(app_t *a);
 void screens_open_question(app_t *a);
 void screens_open_camera(app_t *a);
 void screens_open_settings(app_t *a);
+void screens_open_assistant(app_t *a);
+void screens_privacy_notice(app_t *a, int next);
 void screens_open_history(app_t *a);
 void screens_open_favorites(app_t *a);
 void screens_open_pin_setup(app_t *a);

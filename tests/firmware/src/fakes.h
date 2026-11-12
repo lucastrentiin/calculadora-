@@ -15,29 +15,58 @@ static uint32_t fake_now_s(void) { return 1700000000u + g_now_ms / 1000; }
 typedef struct {
     const char *reply;      /* body returned */
     int status;
-    int fail;               /* 1 = transport error */
+    int fail;               /* 1 = transport error on every URL */
+    int fail_lan_unsent;    /* LAN URL fails before sending (failover test) */
+    int fail_lan_sent;      /* LAN URL fails after the request left (must NOT fail over) */
+    int pending_polls;      /* first POST answers 202, then N polls answer 202 before `reply` */
+    const char *pages[4];   /* replies for ?page=1.. */
     int abort_after_send;   /* emulate long wait: report SENT then poll abort */
-    char last_url[192], last_sig[80], last_body[512];
-    int calls, cancel_calls;
+    char last_url[192], last_sig[80], last_body[512], last_method[8], first_url[192];
+    char hdr_session[40], hdr_provider[40], hdr_proto[8], hdr_cf[40];
+    int calls, cancel_calls, polls, page_calls;
 } fake_net_t;
 static fake_net_t g_net;
 
-static int fake_post(ai_transport_t *t, const char *url, const ai_header_t *h, int nh, const uint8_t *body, size_t len,
+static int fake_post(ai_transport_t *t, const char *method, const char *url, const ai_header_t *h, int nh, const uint8_t *body, size_t len,
                      bool (*abort)(void *), void (*phase)(void *, ai_phase_t), void *u, char **resp, size_t *rl, int *st)
 {
     (void)t;
     g_net.calls++;
+    if (g_net.calls == 1) snprintf(g_net.first_url, sizeof g_net.first_url, "%s", url);
     snprintf(g_net.last_url, sizeof g_net.last_url, "%s", url);
-    for (int i = 0; i < nh; i++) if (!strcmp(h[i].name, "X-Signature")) snprintf(g_net.last_sig, sizeof g_net.last_sig, "%s", h[i].value);
-    if (strstr(url, "/cancel")) {
+    snprintf(g_net.last_method, sizeof g_net.last_method, "%s", method);
+    for (int i = 0; i < nh; i++) {
+        if (!strcmp(h[i].name, "X-Signature")) snprintf(g_net.last_sig, sizeof g_net.last_sig, "%s", h[i].value);
+        if (!strcmp(h[i].name, "X-Session-Id")) snprintf(g_net.hdr_session, sizeof g_net.hdr_session, "%s", h[i].value);
+        if (!strcmp(h[i].name, "X-Provider")) snprintf(g_net.hdr_provider, sizeof g_net.hdr_provider, "%s", h[i].value);
+        if (!strcmp(h[i].name, "X-Protocol")) snprintf(g_net.hdr_proto, sizeof g_net.hdr_proto, "%s", h[i].value);
+        if (!strcmp(h[i].name, "CF-Access-Client-Id")) snprintf(g_net.hdr_cf, sizeof g_net.hdr_cf, "%s", h[i].value);
+    }
+    bool lan = strstr(url, "lan.test") != NULL;
+    if (lan && g_net.fail_lan_unsent) { if (phase) phase(u, AI_PHASE_CONNECTING); return -1; }
+    if (strstr(url, "/requests/cancel")) {
         g_net.cancel_calls++;
+        size_t c = len < sizeof g_net.last_body - 1 ? len : sizeof g_net.last_body - 1;
+        memcpy(g_net.last_body, body, c); g_net.last_body[c] = 0;
         *resp = strdup("{\"status\":\"cancelado no servidor\"}"); *rl = strlen(*resp); *st = 200; return 0;
+    }
+    if (!strcmp(method, "GET") && strstr(url, "page=")) {
+        int p = atoi(strstr(url, "page=") + 5);
+        g_net.page_calls++;
+        *resp = strdup(p >= 1 && p <= 4 && g_net.pages[p - 1] ? g_net.pages[p - 1] : "{}"); *rl = strlen(*resp); *st = 200; return 0;
+    }
+    if (!strcmp(method, "GET")) {
+        g_net.polls++;
+        if (abort && abort(u)) return -2;
+        if (g_net.polls <= g_net.pending_polls) { *resp = strdup("{\"status\":\"processing\"}"); *rl = strlen(*resp); *st = 202; return 0; }
+        *resp = strdup(g_net.reply ? g_net.reply : "{}"); *rl = strlen(*resp); *st = g_net.status ? g_net.status : 200; return 0;
     }
     size_t c = len < sizeof g_net.last_body - 1 ? len : sizeof g_net.last_body - 1;
     memcpy(g_net.last_body, body, c); g_net.last_body[c] = 0;
     if (phase) { phase(u, AI_PHASE_SENDING); phase(u, AI_PHASE_SENT); phase(u, AI_PHASE_WAITING); }
     if (abort && abort(u)) return -2;
-    if (g_net.fail) return -1;
+    if (g_net.fail || (lan && g_net.fail_lan_sent)) return -1;
+    if (g_net.pending_polls) { *resp = strdup("{\"status\":\"processing\"}"); *rl = strlen(*resp); *st = 202; return 0; }
     *resp = strdup(g_net.reply ? g_net.reply : "{}");
     *rl = strlen(*resp);
     *st = g_net.status ? g_net.status : 200;

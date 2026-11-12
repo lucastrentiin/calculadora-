@@ -18,6 +18,7 @@
 #include "app_state.h"
 #include "camera_hal.h"
 #include "display.h"
+#include "esp_app_desc.h"
 #include "esp_log.h"
 #include "esp_netif_sntp.h"
 #include "esp_timer.h"
@@ -97,7 +98,18 @@ static bool load_device_credentials(kv_store_t *kv, ai_client_cfg_t *cfg)
     memset(cfg->device_id, 0, sizeof(cfg->device_id));
     if (kv->get(kv, "dev_id", cfg->device_id, &l) != KV_OK || l == 0) return false;
     if (kv->get(kv, "dev_key", cfg->device_key, &kl) != KV_OK || kl != sizeof(cfg->device_key)) { sec_wipe(cfg->device_key, sizeof(cfg->device_key)); return false; }
-    return true;
+    /* optional overrides / remote access (provisioning CSV, never in source code) */
+    struct { const char *key; char *dst; size_t cap; } opt[] = {
+        {"lan_url", cfg->base_url, sizeof(cfg->base_url)}, {"remote_url", cfg->remote_url, sizeof(cfg->remote_url)},
+        {"cf_id", cfg->cf_client_id, sizeof(cfg->cf_client_id)}, {"cf_secret", cfg->cf_client_secret, sizeof(cfg->cf_client_secret)},
+    };
+    for (size_t i = 0; i < sizeof(opt) / sizeof(opt[0]); i++) {
+        char tmp[128];
+        size_t n = sizeof(tmp) - 1;
+        if (kv->get(kv, opt[i].key, tmp, &n) == KV_OK && n > 0 && n < opt[i].cap) { memcpy(opt[i].dst, tmp, n); opt[i].dst[n] = 0; }
+        sec_wipe(tmp, sizeof(tmp));
+    }
+    return cfg->base_url[0] || cfg->remote_url[0];
 }
 
 static void ui_task(void *arg)
@@ -163,7 +175,9 @@ void app_main(void)
     ai_client_cfg_t acfg;
     memset(&acfg, 0, sizeof(acfg));
     snprintf(acfg.base_url, sizeof(acfg.base_url), "%s", CONFIG_MT_BACKEND_URL);
-    if (acfg.base_url[0] && load_device_credentials(kv, &acfg)) {
+    snprintf(acfg.remote_url, sizeof(acfg.remote_url), "%s", CONFIG_MT_BACKEND_REMOTE_URL);
+    snprintf(acfg.firmware, sizeof(acfg.firmware), "%s", esp_app_get_description()->version);
+    if (load_device_credentials(kv, &acfg)) {
         acfg.transport = ai_transport_esp_create(BACKEND_CA);
         acfg.now_s = now_unix;
         ai_client_init(&s_ai, &acfg);
@@ -175,7 +189,11 @@ void app_main(void)
     sec_wipe(acfg.device_key, sizeof(acfg.device_key));
 
     camera_hal_t *cam = camera_esp_create();
-    ota_hal_t *ota = CONFIG_MT_OTA_MANIFEST_URL[0] ? ota_esp_create(CONFIG_MT_OTA_MANIFEST_URL, BACKEND_CA) : NULL;
+#ifdef CONFIG_MT_OTA_ENABLE
+    ota_hal_t *ota = ai ? ota_esp_create(ai, BACKEND_CA) : NULL;
+#else
+    ota_hal_t *ota = NULL;
+#endif
 
     s_crypto_q = xQueueCreate(2, sizeof(job_t));
     xTaskCreate(crypto_task, "crypto", 6144, NULL, 3, NULL);

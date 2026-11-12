@@ -33,7 +33,9 @@ typedef struct ota_hal {
 int ota_version_cmp(const char *a, const char *b);
 
 #ifdef ESP_PLATFORM
-ota_hal_t *ota_esp_create(const char *manifest_url, const char *ca_pem_or_null);
+struct ai_client;
+/** OTA from the owner's home server (GET /api/v1/updates/manifest and /firmware, HMAC-signed with the device key held by `ai`). */
+ota_hal_t *ota_esp_create(struct ai_client *ai, const char *ca_pem_or_null);
 /** Call after boot self-test passes (cancels rollback). */
 void ota_mark_valid(void);
 #endif

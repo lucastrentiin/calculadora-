@@ -5,6 +5,7 @@
  *  - body written in chunks; abort flag checked between chunks and while
  *    waiting for headers (short socket timeout + total deadline)
  *  - response capped at AI_MAX_RESPONSE bytes, stored in PSRAM when available
+ *  - GET (long polling) uses the same abort/deadline handling
  * NOTE: the abort latency while blocked in the TLS stack is bounded by the
  * socket timeout (1 s). The UI never waits for it (generation counter), so the
  * privacy lock is not delayed; this must still be measured on the hardware.
@@ -28,8 +29,8 @@ static const char *TAG = "ai_https";
 typedef struct { const char *ca_pem; } esp_tr_ctx_t;
 static esp_tr_ctx_t s_ctx;
 
-static int esp_post(ai_transport_t *t, const char *url, const ai_header_t *hdrs, int nh, const uint8_t *body, size_t len,
-                    bool (*should_abort)(void *), void (*on_phase)(void *, ai_phase_t), void *u, char **resp, size_t *resp_len, int *status)
+static int esp_request(ai_transport_t *t, const char *method, const char *url, const ai_header_t *hdrs, int nh, const uint8_t *body, size_t len,
+                       bool (*should_abort)(void *), void (*on_phase)(void *, ai_phase_t), void *u, char **resp, size_t *resp_len, int *status)
 {
     esp_tr_ctx_t *c = t->ctx;
     *resp = NULL;
@@ -40,7 +41,7 @@ static int esp_post(ai_transport_t *t, const char *url, const ai_header_t *hdrs,
 #endif
     esp_http_client_config_t cfg = {
         .url = url,
-        .method = HTTP_METHOD_POST,
+        .method = strcmp(method, "GET") == 0 ? HTTP_METHOD_GET : HTTP_METHOD_POST,
         .timeout_ms = 1000,
         .buffer_size = 2048,
         .buffer_size_tx = 1024,
@@ -105,7 +106,7 @@ out:
     return rc;
 }
 
-static ai_transport_t s_tr = {esp_post, &s_ctx};
+static ai_transport_t s_tr = {esp_request, &s_ctx};
 
 ai_transport_t *ai_transport_esp_create(const char *ca_pem)
 {

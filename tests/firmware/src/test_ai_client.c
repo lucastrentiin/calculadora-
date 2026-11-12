@@ -22,12 +22,15 @@ TEST(signature_matches_backend_format) {
 TEST(text_request_roundtrip) {
     setup();
     g_net.reply = "{\"version\":1,\"request_id\":\"x\",\"mode\":\"short\",\"status\":\"ok\",\"answer\":\"42\",\"steps\":[],\"check\":{\"expression\":\"6*7\",\"expected\":42,\"angle\":\"rad\"}}";
-    uint32_t g = ai_client_start_text(&C, "quanto e 6*7?", RESP_SHORT);
+    uint32_t g = ai_client_start_text(&C, "quanto e 6*7?", RESP_SHORT, "sess-1234", "claude_code");
     CHECK(g > 0);
-    CHECK_INT(ai_client_start_text(&C, "outra", RESP_SHORT), 0); /* one at a time */
+    CHECK_INT(ai_client_start_text(&C, "outra", RESP_SHORT, NULL, NULL), 0); /* one at a time */
     ai_result_t r; CHECK(!ai_client_poll(&C, g, &r));
     CHECK(ai_client_run_pending(&C));
-    CHECK_STR(g_net.last_url, "https://backend.test/v1/ask");
+    CHECK_STR(g_net.last_url, "https://backend.test/api/v1/ai/ask");
+    CHECK(strstr(g_net.last_body, "\"session_id\":\"sess-1234\"") != NULL);
+    CHECK(strstr(g_net.last_body, "\"provider\":\"claude_code\"") != NULL);
+    CHECK_STR(g_net.hdr_proto, "mt1");
     CHECK(strstr(g_net.last_body, "\"mode\":\"short\"") != NULL);
     CHECK(ai_client_poll(&C, g, &r));
     CHECK_INT(r.kind, AI_RESULT_OK); CHECK(r.was_sent);
@@ -38,7 +41,7 @@ TEST(text_request_roundtrip) {
 
 TEST(cancel_before_send_has_no_remote_cancel) {
     setup();
-    uint32_t g = ai_client_start_text(&C, "q", RESP_FAST);
+    uint32_t g = ai_client_start_text(&C, "q", RESP_FAST, NULL, NULL);
     ai_client_cancel(&C);
     ai_client_run_pending(&C);
     ai_result_t r; CHECK(!ai_client_poll(&C, g, &r));
@@ -51,7 +54,7 @@ static void cancel_during_wait(void *u, ai_phase_t p) { (void)u; (void)p; }
 TEST(cancel_after_send_is_tracked_and_late_response_discarded) {
     setup();
     g_net.reply = "{\"version\":1,\"status\":\"ok\",\"answer\":\"segredo\"}";
-    uint32_t g = ai_client_start_text(&C, "q", RESP_FAST);
+    uint32_t g = ai_client_start_text(&C, "q", RESP_FAST, NULL, NULL);
     /* emulate: worker sent the request, then the UI cancels before the response is delivered */
     atomic_store(&C.sent, true);
     ai_client_cancel(&C);
@@ -66,11 +69,11 @@ TEST(cancel_after_send_is_tracked_and_late_response_discarded) {
 TEST(transport_and_http_errors) {
     setup();
     g_net.fail = 1;
-    uint32_t g = ai_client_start_text(&C, "q", RESP_FAST);
+    uint32_t g = ai_client_start_text(&C, "q", RESP_FAST, NULL, NULL);
     ai_client_run_pending(&C);
     ai_result_t r; CHECK(ai_client_poll(&C, g, &r)); CHECK_INT(r.kind, AI_RESULT_TRANSPORT_ERROR); ai_client_free_result(&r);
     g_net.fail = 0; g_net.status = 503; g_net.reply = "{\"error\":\"ocupado\"}";
-    g = ai_client_start_text(&C, "q", RESP_FAST);
+    g = ai_client_start_text(&C, "q", RESP_FAST, NULL, NULL);
     ai_client_run_pending(&C);
     CHECK(ai_client_poll(&C, g, &r)); CHECK_INT(r.kind, AI_RESULT_HTTP_ERROR); CHECK_INT(r.http_status, 503); ai_client_free_result(&r);
 }
@@ -79,11 +82,94 @@ TEST(image_request) {
     setup();
     g_net.reply = "{\"version\":1,\"status\":\"ok\",\"answer\":\"ok\"}";
     uint8_t *img = malloc(100); memset(img, 0xAB, 100);
-    uint32_t g = ai_client_start_image(&C, img, 100, "resolva", RESP_FULL);
+    uint32_t g = ai_client_start_image(&C, img, 100, "resolva", RESP_FULL, "sess-9", "auto");
     CHECK(g > 0);
     ai_client_run_pending(&C);
-    CHECK_STR(g_net.last_url, "https://backend.test/v1/image");
-    ai_result_t r; CHECK(ai_client_poll(&C, g, &r)); ai_client_free_result(&r);
+    CHECK_STR(g_net.last_url, "https://backend.test/api/v1/ai/vision");
+    CHECK_STR(g_net.hdr_session, "sess-9"); CHECK_STR(g_net.hdr_provider, "auto");
+    ai_result_t r; CHECK(ai_client_poll(&C, g, &r)); CHECK_STR(r.session_id, "sess-9"); ai_client_free_result(&r);
+}
+
+static void setup2(void) {
+    ai_client_cfg_t cfg; memset(&cfg, 0, sizeof cfg);
+    strcpy(cfg.base_url, "https://lan.test"); strcpy(cfg.remote_url, "https://remote.test");
+    strcpy(cfg.cf_client_id, "svc.access"); strcpy(cfg.cf_client_secret, "s3cr3t-not-real");
+    strcpy(cfg.device_id, "dev-1"); memset(cfg.device_key, 5, 32); cfg.transport = &g_transport; cfg.now_s = fake_now_s;
+    ai_client_init(&C, &cfg); memset(&g_net, 0, sizeof g_net);
+}
+
+TEST(polling_202_then_result) {
+    setup2();
+    g_net.pending_polls = 2;
+    g_net.reply = "{\"version\":1,\"status\":\"ok\",\"answer\":\"7\"}";
+    uint32_t g = ai_client_start_text(&C, "q", RESP_FAST, "s1", NULL);
+    ai_client_run_pending(&C);
+    CHECK_INT(g_net.polls, 3);
+    CHECK(strstr(g_net.last_url, "/api/v1/requests/") && strstr(g_net.last_url, "?wait=20000"));
+    CHECK_STR(g_net.last_method, "GET");
+    CHECK_STR(g_net.hdr_cf, "svc.access");
+    ai_result_t r; CHECK(ai_client_poll(&C, g, &r)); CHECK_INT(r.kind, AI_RESULT_OK); CHECK(strstr(r.body, "\"7\"") != NULL);
+    ai_client_free_result(&r);
+}
+
+TEST(cancel_during_polling_discards_and_cancels_remotely) {
+    setup2();
+    g_net.pending_polls = 1000;
+    uint32_t g = ai_client_start_text(&C, "q", RESP_FAST, "s1", NULL);
+    /* first POST gets 202; cancel from the UI before the worker polls */
+    g_net.reply = "{}";
+    atomic_store(&C.sent, true);
+    ai_client_cancel(&C);
+    ai_client_run_pending(&C);
+    ai_result_t r; CHECK(!ai_client_poll(&C, g, &r));
+    CHECK_INT(g_net.cancel_calls, 1);
+    CHECK(strstr(g_net.last_body, "\"request_id\":") != NULL);
+    CHECK(g_net.polls <= 1);
+}
+
+TEST(pagination_merges_steps) {
+    setup2();
+    g_net.reply = "{\"version\":1,\"status\":\"ok\",\"answer\":\"x\",\"steps\":[{\"title\":\"a\"}],\"page\":{\"index\":0,\"count\":3,\"steps_total\":3}}";
+    g_net.pages[0] = "{\"steps\":[{\"title\":\"b\"}]}";
+    g_net.pages[1] = "{\"steps\":[{\"title\":\"c\"}]}";
+    uint32_t g = ai_client_start_text(&C, "q", RESP_FULL, NULL, NULL);
+    ai_client_run_pending(&C);
+    CHECK_INT(g_net.page_calls, 2);
+    ai_result_t r; CHECK(ai_client_poll(&C, g, &r));
+    CHECK(strstr(r.body, "\"a\"") && strstr(r.body, "\"b\"") && strstr(r.body, "\"c\""));
+    CHECK(strstr(r.body, "\"page\"") == NULL);
+    ai_client_free_result(&r);
+}
+
+TEST(failover_only_before_send) {
+    setup2();
+    g_net.fail_lan_unsent = 1;
+    g_net.reply = "{\"version\":1,\"status\":\"ok\",\"answer\":\"1\"}";
+    uint32_t g = ai_client_start_text(&C, "q", RESP_FAST, NULL, NULL);
+    ai_client_run_pending(&C);
+    CHECK(strstr(g_net.first_url, "lan.test") != NULL);
+    CHECK(strstr(g_net.last_url, "remote.test") != NULL);
+    ai_result_t r; CHECK(ai_client_poll(&C, g, &r)); CHECK_INT(r.kind, AI_RESULT_OK); CHECK(r.via_remote); ai_client_free_result(&r);
+    /* sent on the LAN and then failed: must NOT be re-sent through the tunnel */
+    setup2();
+    g_net.fail_lan_sent = 1;
+    g = ai_client_start_text(&C, "q", RESP_FAST, NULL, NULL);
+    ai_client_run_pending(&C);
+    CHECK_INT(g_net.calls, 1);
+    CHECK(ai_client_poll(&C, g, &r)); CHECK_INT(r.kind, AI_RESULT_TRANSPORT_ERROR); CHECK(r.was_sent); ai_client_free_result(&r);
+}
+
+TEST(aux_request) {
+    setup2();
+    g_net.reply = "{\"providers\":[{\"id\":\"auto\"}]}";
+    CHECK(ai_client_aux_start(&C, "GET", "/api/v1/device/config", NULL));
+    CHECK(!ai_client_aux_start(&C, "GET", "/api/v1/device/config", NULL));
+    char *resp = NULL; size_t l = 0; int st = 0;
+    CHECK_INT(ai_client_aux_poll(&C, &resp, &l, &st), AI_AUX_PENDING);
+    ai_client_run_pending(&C);
+    CHECK_INT(ai_client_aux_poll(&C, &resp, &l, &st), AI_AUX_DONE);
+    CHECK(resp && strstr(resp, "providers")); free(resp);
+    CHECK_STR(g_net.last_method, "GET");
 }
 
 TEST(response_validation) {
@@ -114,4 +200,6 @@ TEST(response_validation) {
 }
 
 TEST_MAIN(RUN(signature_matches_backend_format); RUN(text_request_roundtrip); RUN(cancel_before_send_has_no_remote_cancel);
-          RUN(cancel_after_send_is_tracked_and_late_response_discarded); RUN(transport_and_http_errors); RUN(image_request); RUN(response_validation))
+          RUN(cancel_after_send_is_tracked_and_late_response_discarded); RUN(transport_and_http_errors); RUN(image_request); RUN(response_validation);
+          RUN(polling_202_then_result); RUN(cancel_during_polling_discards_and_cancels_remotely); RUN(pagination_merges_steps);
+          RUN(failover_only_before_send); RUN(aux_request))
