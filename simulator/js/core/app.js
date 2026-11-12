@@ -9,12 +9,12 @@
   'use strict';
   if (typeof module === 'object' && module.exports) {
     module.exports = factory(require('./framebuffer.js'), require('./font.js'), require('./mathEngine.js'), require('./solvers.js'),
-      require('./units.js'), require('./formulas.js'), require('./views.js'), require('./auth.js'), require('./aiResponse.js'));
+      require('./units.js'), require('./formulas.js'), require('./views.js'), require('./auth.js'), require('./aiResponse.js'), require('./sciCalc.js'));
   } else {
     const T = root.MT;
-    T.AppModule = factory(T.Framebuffer, T.Font, T.MathEngine, T.Solvers, T.Units, T.Formulas, T.Views, T.Auth, T.AiResponse);
+    T.AppModule = factory(T.Framebuffer, T.Font, T.MathEngine, T.Solvers, T.Units, T.Formulas, T.Views, T.Auth, T.AiResponse, T.SciCalc);
   }
-})(typeof self !== 'undefined' ? self : this, function (Framebuffer, Font, M, Solvers, Units, Formulas, V, AuthMod, AiResp) {
+})(typeof self !== 'undefined' ? self : this, function (Framebuffer, Font, M, Solvers, Units, Formulas, V, AuthMod, AiResp, Sci) {
   'use strict';
 
   const S = Object.freeze({
@@ -26,86 +26,20 @@
   const COMBOS = {
     SSAA: ['SHIFT', 'SHIFT', 'ALPHA', 'ALPHA'],
     ASAS: ['ALPHA', 'SHIFT', 'ALPHA', 'SHIFT'],
-    MMSS: ['MODE', 'MODE', 'SHIFT', 'SHIFT']
+    AASS: ['ALPHA', 'ALPHA', 'SHIFT', 'SHIFT']
   };
 
   const DEFAULT_SETTINGS = {
     angle: 'deg', responseMode: 'short', textMethod: 'A', largeFont: false, simpleMenus: false,
     scrollStep: 1, keyRepeat: 'normal', invert: false, autoLockSec: 120, sleepSec: 300,
     aiHistory: true, calcHistory: true, authCombo: 'SSAA', comboWindowMs: 3000, authTimeoutMs: 30000,
-    multitapMs: 900, jpegQuality: 12, resolution: 'SVGA'
+    multitapMs: 900, jpegQuality: 12, resolution: 'SVGA',
+    // NORMAL mode (fx-82MS-class): MODE settings
+    calcMode: 'COMP', regType: 'Lin', disp: 'norm1', dispDigits: 0, fracFmt: 'abc', decSep: 'dot', provider: 'auto', aiNoticeAck: false
   };
 
   const RESOLUTIONS = [['QVGA', '320x240'], ['VGA', '640x480'], ['SVGA', '800x600'], ['XGA', '1024x768'], ['UXGA', '1600x1200'], ['QXGA', '2048x1536']];
   const MODE_NAMES = { fast: 'Rapido', short: 'Curto', full: 'Completo' };
-
-  /* ======================================================================
-   * Calculator (NORMAL state)
-   * ==================================================================== */
-  class Calculator {
-    constructor() {
-      this.tokens = []; this.cursor = 0; this.result = null; this.evaluated = false;
-      this.ans = 0; this.mem = 0; this.showFraction = false; this.hoff = 0; this.histIdx = -1;
-      this.history = [];
-    }
-    get expr() { return this.tokens.join(''); }
-    clear() { this.tokens = []; this.cursor = 0; this.result = null; this.evaluated = false; this.hoff = 0; this.histIdx = -1; }
-    insert(t) {
-      if (this.evaluated) {
-        const continues = /^[+\-*/^%!]|^\^/.test(t) || t === '^2' || t === '^(-1)';
-        this.tokens = continues ? ['Ans'] : [];
-        this.cursor = this.tokens.length; this.evaluated = false; this.result = null;
-      }
-      if (this.expr.length + t.length > M.MAX_LEN) return;
-      this.tokens.splice(this.cursor, 0, t); this.cursor++; this.histIdx = -1;
-    }
-    del() {
-      if (this.evaluated) { this.evaluated = false; this.result = null; this.cursor = this.tokens.length; return; }
-      if (this.cursor > 0) { this.tokens.splice(this.cursor - 1, 1); this.cursor--; }
-    }
-    ctx(app) { return { angle: app.settings.angle, vars: { Ans: this.ans, M: this.mem } }; }
-    evaluate(app) {
-      if (!this.tokens.length) return;
-      const r = M.calculate(this.expr, this.ctx(app));
-      this.result = r; this.evaluated = true;
-      if (r.ok) {
-        this.ans = r.value;
-        this.history.unshift({ tokens: this.tokens.slice(), text: r.text });
-        if (this.history.length > 50) this.history.pop();
-        app.saveCalcHistory();
-      }
-    }
-    currentValue(app) {
-      if (this.evaluated && this.result && this.result.ok) return this.result.value;
-      const r = M.calculate(this.expr, this.ctx(app));
-      return r.ok ? r.value : null;
-    }
-    browse(dir) {
-      if (!this.history.length) return;
-      this.histIdx = Math.min(this.history.length - 1, Math.max(0, this.histIdx + (dir < 0 ? 1 : -1)));
-      const h = this.history[this.histIdx];
-      this.tokens = h.tokens.slice(); this.cursor = this.tokens.length; this.evaluated = true;
-      this.result = { ok: true, text: h.text, value: Number(h.text) };
-    }
-    resultText() {
-      const r = this.result;
-      if (!r) return '';
-      if (!r.ok) return r.message;
-      if (this.showFraction && r.fraction && r.fraction.d !== 1) return r.fraction.n + '/' + r.fraction.d;
-      return r.text;
-    }
-  }
-
-  const CALC_KEYS = {
-    '0': '0', '1': '1', '2': '2', '3': '3', '4': '4', '5': '5', '6': '6', '7': '7', '8': '8', '9': '9',
-    DOT: '.', ADD: '+', SUB: '-', NEG: '-', MUL: '*', DIV: '/', LPAREN: '(', RPAREN: ')', EXP: 'E', ANS: 'Ans',
-    PI: 'pi', PERCENT: '%', SQR: '^2', INV: '^(-1)', POW: '^', SQRT: 'sqrt(', SIN: 'sin(', COS: 'cos(', TAN: 'tan(',
-    LOG: 'log(', LN: 'ln(', VARX: 'x', COMMA: ','
-  };
-  const CALC_SHIFT = {
-    SIN: 'asin(', COS: 'acos(', TAN: 'atan(', LOG: '10^(', LN: 'e^(', SQRT: 'cbrt(', POW: 'root(', RPAREN: '!',
-    MUL: 'nCr(', DIV: 'nPr(', DOT: ','
-  };
 
   function lcdPatternView(state) {
     return { state, protected: true, n: 0,
@@ -134,8 +68,12 @@
       this.height = opts.height || 32;
       this.fb = new Framebuffer(this.width, this.height);
       this.settings = Object.assign({}, DEFAULT_SETTINGS, this.loadJSON('settings', {}));
-      this.calc = new Calculator();
-      this.calc.history = this.settings.calcHistory ? this.loadJSON('calc.history', []) : [];
+      if (!['deg', 'rad', 'grad'].includes(this.settings.angle)) this.settings.angle = 'deg';
+      if (!COMBOS[this.settings.authCombo]) this.settings.authCombo = 'SSAA';
+      this.calc = new Sci.SciCalc(this);
+      const hist = this.settings.calcHistory ? this.loadJSON('calc.history', []) : [];
+      this.calc.history = Array.isArray(hist) ? hist.filter(h => h && Array.isArray(h.tokens)) : [];
+      this.calc.load(this.loadJSON('calc.state', null));
       this.views = [];
       this.session = { authenticated: false };
       this.auth = new AuthMod.Auth({ crypto: platform.crypto, storage: platform.storage, now: () => this.now(), policy: opts.authPolicy });
@@ -207,7 +145,7 @@
           else { while (this.views.length) this.pop(); } // unprotected tools: just back to calculator
           return;
         }
-        this.calc.clear(); this.shift = false; this.alpha = false; // conventional ON/clear
+        this.calc.clear(); this.shift = false; this.alpha = false; // conventional ON: clear display
         return;
       }
 
@@ -238,32 +176,11 @@
     }
 
     calcKey(e) {
-      const c = this.calc;
-      const k = e.key;
-      if (e.shift && CALC_SHIFT[k]) { c.insert(CALC_SHIFT[k]); return; }
-      if (CALC_KEYS[k] != null) { c.insert(CALC_KEYS[k]); return; }
-      switch (k) {
-        case 'EQ':
-          if (e.shift) { this.openSteps(c.expr || (c.history[0] && c.history[0].tokens.join('')) || ''); return; }
-          c.evaluate(this); return;
-        case 'DEL': c.del(); return;
-        case 'AC': c.clear(); return;
-        case 'LEFT': if (c.evaluated) c.del(); else if (c.cursor > 0) c.cursor--; return;
-        case 'RIGHT': if (c.evaluated) c.del(); else if (c.cursor < c.tokens.length) c.cursor++; return;
-        case 'UP': c.browse(-1); return;
-        case 'DOWN': c.browse(1); return;
-        case 'MODE': this.settings.angle = this.settings.angle === 'deg' ? 'rad' : 'deg'; this.saveSettings(); return;
-        case 'FRAC': c.showFraction = !c.showFraction; return;
-        case 'STO': {
-          const v = c.currentValue(this);
-          if (v != null) c.mem = e.shift ? c.mem - v : c.mem + v;
-          return;
-        }
-        case 'RCL': if (e.shift) c.mem = 0; else c.insert('M'); return;
-        case 'MENU': this.openTools(false); return;
-        default: return;
-      }
+      if (e.key === 'MENU') { this.openTools(false); return; } // extension key (not on the original)
+      this.calc.key(e);
     }
+
+    powerOff() { this.asleep = true; if (this.p.power && this.p.power.sleep) this.p.power.sleep(); }
 
     /* ---------------- authentication ---------------- */
     beginAuth() {
@@ -373,17 +290,12 @@
     }
 
     renderCalc(fb) {
-      const c = this.calc;
       const L = this.layout();
-      // status row (tiny font)
-      fb.drawTiny(1, 0, this.settings.angle === 'deg' ? 'D' : 'R');
-      if (this.shift) fb.drawTiny(7, 0, 'S');
-      if (this.alpha) fb.drawTiny(13, 0, 'A');
-      if (c.mem !== 0) fb.drawTiny(19, 0, 'M');
-      if (c.showFraction) fb.drawTiny(25, 0, 'F');
+      this.calc.render(fb, { cursorOn: Math.floor(this.now() / 500) % 2 === 0, scale: L.scale === 2 ? 2 : (this.calc.resultText().length <= 10 ? 2 : 1) });
       const bat = this.battery();
       if (bat.supported) {
         const x = this.width - 16;
+        fb.fillRect(x - 1, 0, 12, 6, 0);
         fb.drawRect(x, 0, 9, 5); fb.vline(x + 9, 1, 3);
         const lvl = Math.round(7 * Math.max(0, Math.min(100, bat.percent)) / 100);
         if (!bat.low || Math.floor(this.now() / 500) % 2) fb.fillRect(x + 1, 1, lvl, 3);
@@ -391,29 +303,6 @@
       if (this.pin) {
         // discreet authentication indicator: 3x3 dot in the top-right corner
         if (!this.authBusy || Math.floor(this.now() / 250) % 2) fb.fillRect(this.width - 3, 0, 3, 3, 1);
-      }
-      // expression (horizontal scroll keeps cursor visible)
-      const cols = Math.floor((this.width - 4) / 6);
-      const parts = c.tokens.map(t => Font.normalize(M.pretty(t)));
-      const text = parts.join('');
-      const curChar = parts.slice(0, c.cursor).join('').length;
-      if (curChar < c.hoff) c.hoff = curChar;
-      if (curChar > c.hoff + cols - 1) c.hoff = curChar - cols + 1;
-      if (c.evaluated) c.hoff = Math.max(0, text.length - cols);
-      fb.drawText(2, 8, text.slice(c.hoff, c.hoff + cols));
-      if (c.hoff > 0) V.arrowLeft(fb, 0, 9);
-      if (text.length - c.hoff > cols) V.arrowRight(fb, this.width - 3, 9);
-      if (!c.evaluated && Math.floor(this.now() / 500) % 2 === 0) fb.vline(1 + (curChar - c.hoff) * 6, 8, 8, 1);
-      // result
-      const r = c.resultText();
-      if (r) {
-        if (c.result && !c.result.ok) fb.drawText(2, 24, r.slice(0, cols));
-        else {
-          const big = L.scale === 2 && r.length * 12 <= this.width - 2;
-          const scale = big ? 2 : 1;
-          const w = Framebuffer.textWidth(r, scale);
-          fb.drawText(Math.max(0, this.width - w - 1), big ? 16 : 24, r, { scale });
-        }
       }
     }
 
@@ -978,5 +867,5 @@
     }
   }
 
-  return { App, Calculator, STATES: S, COMBOS, DEFAULT_SETTINGS, RESOLUTIONS };
+  return { App, Calculator: Sci.SciCalc, STATES: S, COMBOS, DEFAULT_SETTINGS, RESOLUTIONS };
 });

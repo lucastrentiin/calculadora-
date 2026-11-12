@@ -36,11 +36,14 @@ test('starts in NORMAL and works offline as a calculator', async () => {
   assert.equal(c.app.calc.resultText(), '3');
   c.k('ADD', '1', 'EQ'); // continues from Ans
   assert.equal(c.app.calc.resultText(), '4');
-  c.k('MODE'); assert.equal(c.app.settings.angle, 'rad');
+  c.k('MODE', 'MODE', '2'); assert.equal(c.app.settings.angle, 'rad'); // MODE screens like the original
   c.k('ON'); assert.equal(c.app.calc.expr, ''); // ON keeps its conventional meaning
-  c.k('UP'); assert.equal(c.app.calc.resultText(), '4'); // local history
-  c.k('AC', '3', 'EQ', 'STO', 'AC', 'RCL', 'EQ'); assert.equal(c.app.calc.resultText(), '3');
-  c.k('1', 'DIV', '3', 'EQ', 'FRAC'); assert.equal(c.app.calc.resultText(), '1/3');
+  c.k('UP'); assert.equal(c.app.calc.resultText(), '4'); // REPLAY
+  c.k('AC', '3', 'EQ', 'STO');                        // M+
+  c.k('AC', 'RCL', 'STO');                           // RCL M
+  assert.equal(c.app.calc.resultText(), '3');
+  c.k('1', 'FRAC', '3', 'EQ'); assert.equal(c.app.calc.resultText(), '1┘3');
+  c.k('FRAC'); assert.equal(c.app.calc.resultText(), '0.3333333333');
 });
 
 test('first use requires creating a PIN (no fixed PIN); verifier never stores the PIN', async () => {
@@ -349,7 +352,7 @@ test('unprotected tools from NORMAL (MENU): formulas, conversions and steps; ON 
   assert.match(lines, /100 mm = 0.1 m/);
   c.k('ON'); assert.equal(c.app.state, 'NORMAL');
   c.k('2', 'ADD', '3', 'MUL', '4');
-  c.app.handleKey({ key: 'EQ', shift: true });
+  c.k('MENU', 'EQ', 'EQ');                           // tools -> step by step of the current expression
   assert.equal(c.app.state, 'MATH_TOOLS');
   assert.match(c.app.top.blocks.map(b => b.text).join('\n'), /14/);
 });

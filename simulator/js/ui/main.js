@@ -61,7 +61,7 @@
 
   /* ---------- keypad ---------- */
   const pad = $('keypad');
-  const FN = new Set(['SHIFT', 'ALPHA', 'MODE', 'MENU', 'FRAC', 'STO', 'RCL', 'DEL', 'AC']);
+  const FN = new Set(['SHIFT', 'ALPHA', 'MODE', 'MENU', 'DEL', 'AC']);
   const REPEATABLE = new Set(['UP', 'DOWN', 'LEFT', 'RIGHT', 'DEL']);
   const REPEAT = { off: null, lenta: [600, 250], normal: [450, 140], rapida: [300, 70] };
 
@@ -72,10 +72,11 @@
     if (ev.key === 'ON') log('tecla ON', { ms: (performance.now() - t0).toFixed(2) });
   }
 
-  function makeKey(code, label, shiftLabel) {
+  function makeKey(code, label, shiftLabel, alphaLabel) {
     const b = document.createElement('button');
     b.className = 'key' + (FN.has(code) ? ' fn' : '') + (code === 'EQ' ? ' eq' : '') + (code === 'ON' ? ' on' : '');
     if (shiftLabel) { const s = document.createElement('span'); s.className = 'sh'; s.textContent = shiftLabel; b.appendChild(s); }
+    if (alphaLabel) { const s = document.createElement('span'); s.className = 'al'; s.textContent = alphaLabel; b.appendChild(s); }
     b.appendChild(document.createTextNode(label));
     b.setAttribute('aria-label', code);
     let timer = null;

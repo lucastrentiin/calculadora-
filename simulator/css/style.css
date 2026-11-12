@@ -15,6 +15,7 @@ html, body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.
 .key { position: relative; min-height: 44px; border: 0; border-radius: 9px; background: var(--key); color: var(--text); font-size: 15px; font-weight: 600;
   padding: 12px 2px 4px; cursor: pointer; box-shadow: 0 2px 0 #0007; }
 .key:active, .key.down { background: var(--key-hi); transform: translateY(1px); box-shadow: none; }
+.key .al { position: absolute; top: 2px; right: 4px; font-size: 9px; color: #e47a7a; }
 .key .sh { position: absolute; top: 2px; left: 0; right: 0; font-size: 9px; font-weight: 500; color: var(--accent); text-align: center; }
 .key.fn { background: var(--key-fn); font-size: 12px; }
 .key.eq { background: var(--key-eq); }

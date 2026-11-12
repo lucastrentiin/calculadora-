@@ -44,7 +44,8 @@
     sin: [1, 1], cos: [1, 1], tan: [1, 1], asin: [1, 1], acos: [1, 1], atan: [1, 1],
     sinh: [1, 1], cosh: [1, 1], tanh: [1, 1], asinh: [1, 1], acosh: [1, 1], atanh: [1, 1],
     sqrt: [1, 1], cbrt: [1, 1], root: [2, 2], ln: [1, 1], log: [1, 2], log2: [1, 1], exp: [1, 1],
-    abs: [1, 1], floor: [1, 1], ceil: [1, 1], round: [1, 1], nCr: [2, 2], nPr: [2, 2]
+    abs: [1, 1], floor: [1, 1], ceil: [1, 1], round: [1, 1], nCr: [2, 2], nPr: [2, 2],
+    Pol: [2, 2], Rec: [2, 2], Rnd: [1, 1]
   };
 
   const FN_RULE = {
@@ -53,7 +54,8 @@
     asinh: 'Arco-seno hiperb.', acosh: 'Arco-cosseno hiperb.', atanh: 'Arco-tangente hiperb.',
     sqrt: 'Raiz quadrada', cbrt: 'Raiz cubica', root: 'Raiz n-esima', ln: 'Logaritmo natural',
     log: 'Logaritmo', log2: 'Logaritmo base 2', exp: 'Exponencial', abs: 'Valor absoluto',
-    floor: 'Piso', ceil: 'Teto', round: 'Arredondamento', nCr: 'Combinacao', nPr: 'Arranjo'
+    floor: 'Piso', ceil: 'Teto', round: 'Arredondamento', nCr: 'Combinacao', nPr: 'Arranjo',
+    Pol: 'Retangular->polar', Rec: 'Polar->retangular', Rnd: 'Arredondamento interno'
   };
 
   /* ------------------------------------------------------------------ */
@@ -64,7 +66,7 @@
     return String(src)
       .replace(/×/g, '*').replace(/·/g, '*').replace(/÷/g, '/').replace(/−/g, '-')
       .replace(/π/g, 'pi').replace(/√/g, 'sqrt').replace(/²/g, '^2').replace(/³/g, '^3')
-      .replace(/⁻¹/g, '^(-1)');
+      .replace(/⁻¹/g, '^(-1)').replace(/Ran#/g, 'Ran_').replace(/ŷ/g, 'yhat').replace(/x̂/g, 'xhat');
   }
 
   function tokenize(src) {
@@ -95,10 +97,15 @@
       if (/[A-Za-z_]/.test(c)) {
         const start = i;
         while (i < s.length && /[A-Za-z_0-9]/.test(s[i])) i++;
+        if (/^n[CP]r./.test(s.slice(start, i))) i = start + 3; // infix nCr/nPr followed by a number
         toks.push({ t: 'id', v: s.slice(start, i), pos: start });
         continue;
       }
       if ('+-*/^!%'.includes(c)) { toks.push({ t: 'op', v: c, pos: i }); i++; continue; }
+      // fx-82MS style inputs: a┘b┘c fractions, a°b°c° (DMS), DRG suffixes ᵒ ʳ ᵍ
+      if (c === '┘') { toks.push({ t: 'frac', pos: i }); i++; continue; }
+      if (c === '°') { toks.push({ t: 'dms', pos: i }); i++; continue; }
+      if (c === 'ᵒ' || c === 'ʳ' || c === 'ᵍ') { toks.push({ t: 'op', v: c, pos: i }); i++; continue; }
       if (c === '(') { toks.push({ t: 'lp', pos: i }); i++; continue; }
       if (c === ')') { toks.push({ t: 'rp', pos: i }); i++; continue; }
       if (c === ',' || c === ';') { toks.push({ t: 'comma', pos: i }); i++; continue; }
@@ -123,7 +130,8 @@
     const leave = () => { depth--; };
 
     function startsPrimary(tk) {
-      return tk.t === 'num' || tk.t === 'id' || tk.t === 'lp';
+      if (tk.t === 'id' && (tk.v === 'nCr' || tk.v === 'nPr') && toks[p + 1] && toks[p + 1].t !== 'lp') return false;
+      return tk.t === 'num' || (tk.t === 'id' && tk.v !== 'xhat' && tk.v !== 'yhat' && tk.v !== 'xhat1' && tk.v !== 'xhat2') || tk.t === 'lp';
     }
 
     function parseExpr() {
@@ -179,17 +187,50 @@
 
     function parsePostfix() {
       let a = parsePrimary();
-      while (peek().t === 'op' && (peek().v === '!' || peek().v === '%')) {
-        const op = next().v;
-        a = op === '!' ? { t: 'fact', a } : { t: 'pct', a };
+      for (;;) {
+        const tk = peek();
+        if (tk.t === 'op' && (tk.v === '!' || tk.v === '%')) { next(); a = tk.v === '!' ? { t: 'fact', a } : { t: 'pct', a }; continue; }
+        if (tk.t === 'op' && (tk.v === 'ᵒ' || tk.v === 'ʳ' || tk.v === 'ᵍ')) { next(); a = { t: 'angu', u: tk.v, a }; continue; }
+        if (tk.t === 'id' && /^(xhat|xhat1|xhat2|yhat)$/.test(tk.v)) { next(); a = { t: 'est', name: tk.v, a }; continue; }
+        // fx-82MS infix combinatorics: 5 nCr 2, 5 nPr 2 (higher priority than * /)
+        if (tk.t === 'id' && (tk.v === 'nCr' || tk.v === 'nPr') && toks[p + 1] && toks[p + 1].t !== 'lp') { next(); a = { t: 'fn', name: tk.v, args: [a, parsePrimary()] }; continue; }
+        break;
       }
       return a;
+    }
+
+    function parseNumberTail(first) {
+      // a┘b or a┘b┘c (fraction / mixed fraction)
+      if (peek().t === 'frac') {
+        const parts = [first];
+        while (peek().t === 'frac' && parts.length < 3) {
+          next();
+          const n = next();
+          if (n.t !== 'num') throw new MathError(ERR.SYNTAX, 'fracao', n.pos);
+          parts.push(n.v);
+        }
+        if (parts.length === 2) return { t: 'frac', w: 0, n: parts[0], d: parts[1] };
+        return { t: 'frac', w: parts[0], n: parts[1], d: parts[2] };
+      }
+      // a°b°c° (degrees-minutes-seconds)
+      if (peek().t === 'dms') {
+        const parts = [first];
+        next();
+        while (peek().t === 'num' && parts.length < 3) {
+          parts.push(next().v);
+          if (peek().t === 'dms') next(); else break;
+        }
+        return { t: 'dmsv', parts };
+      }
+      return null;
     }
 
     function parsePrimary() {
       const tk = next();
       if (tk.t === 'num') {
         if (!isFinite(tk.v)) throw new MathError(ERR.OVERFLOW);
+        const tail = parseNumberTail(tk.v);
+        if (tail) return tail;
         return { t: 'num', v: tk.v };
       }
       if (tk.t === 'lp') {
@@ -218,6 +259,7 @@
         }
         if (FUNCTIONS[name]) throw new MathError(ERR.SYNTAX, name + ' requer "("', tk.pos);
         if (Object.prototype.hasOwnProperty.call(CONSTANTS, name)) return { t: 'const', name };
+        if (name === 'Ran_') return { t: 'ran' };
         if (!isVar(name)) throw new MathError(ERR.UNKNOWN, name, tk.pos);
         return { t: 'var', name };
       }
@@ -248,9 +290,15 @@
 
   function toRad(x, ctx) {
     if (ctx.angle === 'deg') return (x % 360) * Math.PI / 180;
+    if (ctx.angle === 'grad') return (x % 400) * Math.PI / 200;
     return x;
   }
-  function fromRad(x, ctx) { return ctx.angle === 'deg' ? x * 180 / Math.PI : x; }
+  function fromRad(x, ctx) { return ctx.angle === 'deg' ? x * 180 / Math.PI : ctx.angle === 'grad' ? x * 200 / Math.PI : x; }
+  /** value given in unit u (ᵒ deg, ʳ rad, ᵍ grad) expressed in the current angle unit (DRG►) */
+  function angleTo(x, u, ctx) {
+    const rad = u === 'ᵒ' ? x * Math.PI / 180 : u === 'ᵍ' ? x * Math.PI / 200 : x;
+    return ctx.angle === 'deg' ? rad * 180 / Math.PI : ctx.angle === 'grad' ? rad * 200 / Math.PI : rad;
+  }
 
   function factorial(n) {
     if (!isInt(n) || n < 0) throw new MathError(ERR.DOMAIN, 'fatorial');
@@ -323,6 +371,20 @@
       case 'floor': return Math.floor(x);
       case 'ceil': return Math.ceil(x);
       case 'round': return Math.round(x);
+      case 'Rnd': return ctx.round ? ctx.round(x) : Number(x.toPrecision(10));
+      case 'Pol': {
+        const r = Math.hypot(args[0], args[1]);
+        if (r === 0 && args[0] === 0) throw new MathError(ERR.DOMAIN, 'Pol(0,0)');
+        const th = fromRad(Math.atan2(args[1], args[0]), ctx);
+        if (ctx.setVar) { ctx.setVar('E', r); ctx.setVar('F', th); }
+        return r;
+      }
+      case 'Rec': {
+        const r = args[0], th = toRad(args[1], ctx);
+        const x = snap(r * Math.cos(th)), y = snap(r * Math.sin(th));
+        if (ctx.setVar) { ctx.setVar('E', x); ctx.setVar('F', y); }
+        return x;
+      }
       case 'nCr': case 'nPr': {
         const n = args[0], r = args[1];
         if (!isInt(n) || !isInt(r) || n < 0 || r < 0 || r > n) throw new MathError(ERR.DOMAIN, name);
@@ -355,6 +417,20 @@
       case 'fact': return check(factorial(evalNode(n.a, ctx)));
       case 'pct': return check(evalNode(n.a, ctx) / 100);
       case 'fn': return check(applyFn(n.name, n.args.map(a => evalNode(a, ctx)), ctx));
+      case 'frac': {
+        if (n.d === 0) throw new MathError(ERR.DIV_ZERO);
+        return check(n.w + n.n / n.d);
+      }
+      case 'dmsv': {
+        const [a, b = 0, c = 0] = n.parts;
+        return check(a + b / 60 + c / 3600);
+      }
+      case 'angu': return check(angleTo(evalNode(n.a, ctx), n.u, ctx));
+      case 'ran': return ctx.random ? ctx.random() : Math.floor(Math.random() * 1000) / 1000;
+      case 'est': {
+        if (!ctx.estimate) throw new MathError(ERR.SYNTAX, 'estimativa fora do modo REG');
+        return check(ctx.estimate(n.name, evalNode(n.a, ctx)));
+      }
       case 'bin': {
         const a = evalNode(n.a, ctx);
         // calculator percentage: 200 + 10% = 220
@@ -465,6 +541,11 @@
         case 'fact': return wrap(n.a, prec(n.a) < 6) + '!';
         case 'pct': return wrap(n.a, prec(n.a) < 6) + '%';
         case 'fn': return n.name + '(' + n.args.map(pr).join(',') + ')';
+        case 'frac': return (n.w ? fmt(n.w) + '┘' : '') + fmt(n.n) + '┘' + fmt(n.d);
+        case 'dmsv': return n.parts.map(fmt).join('°') + '°';
+        case 'angu': return wrap(n.a, prec(n.a) < 6) + n.u;
+        case 'ran': return 'Ran#';
+        case 'est': return wrap(n.a, prec(n.a) < 6) + n.name;
         case 'bin': {
           const p = prec(n);
           let left, right;
@@ -550,6 +631,9 @@
       else if (n.t === 'neg') rule = 'Sinal';
       else if (n.t === 'fact') rule = 'Fatorial';
       else if (n.t === 'pct') rule = 'Porcentagem';
+      else if (n.t === 'frac') rule = 'Fracao';
+      else if (n.t === 'dmsv') rule = 'Graus-minutos-segundos';
+      else if (n.t === 'angu') rule = 'Conversao de angulo';
       else rule = 'Calculo';
       const before = printAst(n);
       const repl = { t: 'num', v };

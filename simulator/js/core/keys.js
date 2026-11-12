@@ -11,20 +11,22 @@
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
-  // [code, label, shiftLabel]
+  // [code, label, shiftLabel, alphaLabel] — fx-82MS-class arrangement used by the DEXIN KK-82MS-B
+  // reference (docs/DEXIN_COMPAT.md). MENU is an extension key (offline tools), not on the original.
   const LAYOUT = [
-    [['SHIFT', 'SHIFT', ''], ['ALPHA', 'ALPHA', 'a/A'], ['MODE', 'MODE', ''], ['MENU', 'MENU', ''], ['ON', 'ON', '']],
-    [['FRAC', 'S⇔D', ''], ['SQRT', '√', '∛'], ['SQR', 'x²', ''], ['POW', 'xʸ', 'ʸ√x'], ['LOG', 'log', '10ˣ'], ['LN', 'ln', 'eˣ']],
-    [['NEG', '(−)', ''], ['LPAREN', '(', ''], ['RPAREN', ')', 'x!'], ['SIN', 'sin', 'sin⁻¹'], ['COS', 'cos', 'cos⁻¹'], ['TAN', 'tan', 'tan⁻¹']],
-    [['STO', 'M+', 'M−'], ['RCL', 'MR', 'MC'], ['PI', 'π', ''], ['PERCENT', '%', ''], ['INV', 'x⁻¹', ''], ['VARX', 'x', '']],
-    [['7', '7', ''], ['8', '8', ''], ['9', '9', ''], ['DEL', 'DEL', ''], ['AC', 'AC', '']],
-    [['4', '4', ''], ['5', '5', ''], ['6', '6', ''], ['MUL', '×', 'nCr'], ['DIV', '÷', 'nPr']],
-    [['1', '1', ''], ['2', '2', 'abc'], ['3', '3', 'def'], ['ADD', '+', ''], ['SUB', '−', '']],
-    [['0', '0', ''], ['DOT', '.', ','], ['EXP', '×10ˣ', ''], ['ANS', 'Ans', ''], ['EQ', '=', 'passos']]
+    [['SHIFT', 'SHIFT', ''], ['ALPHA', 'ALPHA', ''], ['MODE', 'MODE', 'CLR'], ['MENU', 'MENU', ''], ['ON', 'ON', '']],
+    [['INV', 'x⁻¹', 'x!'], ['NCR', 'nCr', 'nPr'], ['POL', 'Pol(', 'Rec('], ['CUBE', 'x³', '∛']],
+    [['FRAC', 'ab/c', 'd/c'], ['SQRT', '√', ''], ['SQR', 'x²', ''], ['POW', '^', 'ˣ√'], ['LOG', 'log', '10ˣ'], ['LN', 'ln', 'eˣ']],
+    [['NEG', '(−)', '', 'A'], ['DMS', "°'\"", '←', 'B'], ['HYP', 'hyp', '', 'C'], ['SIN', 'sin', 'sin⁻¹', 'D'], ['COS', 'cos', 'cos⁻¹', 'E'], ['TAN', 'tan', 'tan⁻¹', 'F']],
+    [['RCL', 'RCL', 'STO'], ['ENG', 'ENG', '←'], ['LPAREN', '(', ''], ['RPAREN', ')', '', 'X'], ['COMMA', ',', ';', 'Y'], ['STO', 'M+', 'M−', 'M']],
+    [['7', '7', ''], ['8', '8', ''], ['9', '9', ''], ['DEL', 'DEL', 'INS'], ['AC', 'AC', 'OFF']],
+    [['4', '4', ''], ['5', '5', ''], ['6', '6', ''], ['MUL', '×', ''], ['DIV', '÷', '']],
+    [['1', '1', 'S-SUM'], ['2', '2', 'S-VAR'], ['3', '3', ''], ['ADD', '+', ''], ['SUB', '−', '']],
+    [['0', '0', 'Rnd'], ['DOT', '.', 'Ran#'], ['EXP', 'EXP', 'π'], ['ANS', 'Ans', 'DRG►'], ['EQ', '=', '%']]
   ];
   const DPAD = ['UP', 'DOWN', 'LEFT', 'RIGHT'];
 
-  const ALL = new Set(LAYOUT.flat().map(k => k[0]).concat(DPAD).concat(['CHAR', 'COMMA']));
+  const ALL = new Set(LAYOUT.flat().map(k => k[0]).concat(DPAD).concat(['CHAR', 'COMMA', 'PERCENT', 'PI', 'VARX']));
 
   /** PC keyboard -> key event (simulator only). textMode: printable chars become CHAR. */
   function fromKeyboard(e, textMode) {
@@ -39,7 +41,7 @@
       '0': '0', '1': '1', '2': '2', '3': '3', '4': '4', '5': '5', '6': '6', '7': '7', '8': '8', '9': '9',
       '.': 'DOT', ',': 'COMMA', '+': 'ADD', '-': 'SUB', '*': 'MUL', '/': 'DIV', '^': 'POW', '(': 'LPAREN', ')': 'RPAREN',
       '%': 'PERCENT', s: 'SIN', c: 'COS', t: 'TAN', g: 'LOG', l: 'LN', p: 'PI', r: 'SQRT', q: 'SQR', e: 'EXP', x: 'VARX',
-      a: 'ANS', m: 'MODE', n: 'NEG', i: 'INV', f: 'FRAC', '!': 'RPAREN'
+      a: 'ANS', m: 'MODE', n: 'NEG', i: 'INV', f: 'FRAC', '!': 'RPAREN', h: 'HYP', d: 'DMS', k: 'ENG', o: 'POL', u: 'CUBE', v: 'RCL', C: 'NCR'
     };
     if (map[k]) return { key: map[k], shift: k === '!' ? true : undefined };
     return null;
