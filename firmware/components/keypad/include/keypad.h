@@ -76,6 +76,9 @@ bool key_repeatable(keycode_t k);
 int keypad_matrix_start(keypad_t *k);
 /** UART console driver: characters typed on the serial monitor become keys (bring-up). */
 int keypad_console_start(keypad_t *k);
+/** Light sleep support: drive columns low and enable row wake-up (matrix driver only). */
+int keypad_matrix_prepare_sleep(void);
+void keypad_matrix_after_sleep(void);
 #endif
 keycode_t keypad_console_map(int ch, bool *shift); /* exposed for tests */
 

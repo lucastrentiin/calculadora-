@@ -143,6 +143,9 @@ typedef struct {
     char code[9];
 } camera_view_t;
 
+/* Set by the phone preview (HTTP server task); global so a late callback never touches freed view memory. */
+static volatile bool s_remote_capture;
+
 static void cam_send(app_t *a, camera_view_t *c)
 {
     cam_image_t img = c->img;
@@ -163,7 +166,7 @@ static void cam_send(app_t *a, camera_view_t *c)
 }
 
 #ifdef ESP_PLATFORM
-static void preview_capture_cb(void *ctx) { camera_view_t *c = ctx; (void)c; /* capture is requested from the UI task on next tick */ }
+static void preview_capture_cb(void *ctx) { (void)ctx; s_remote_capture = true; /* handled in cam_tick (UI task) */ }
 #endif
 
 static bool cam_key(view_t *v, app_t *a, keycode_t k, bool shift)
@@ -241,6 +244,15 @@ static void cam_render(view_t *v, app_t *a, fb_t *fb)
     fb_tiny(fb, 2, 26, "AC SAI");
 }
 
+static void cam_tick(view_t *v, app_t *a)
+{
+    camera_view_t *c = (camera_view_t *)v;
+    if (s_remote_capture) {
+        s_remote_capture = false;
+        if (a->p.cam->state(a->p.cam) == CAM_READY && !c->img.data) a->p.cam->capture(a->p.cam);
+    }
+}
+
 static void cam_dispose(view_t *v)
 {
     camera_view_t *c = (camera_view_t *)v;
@@ -264,7 +276,7 @@ void screens_open_camera(app_t *a)
     if (!a->p.cam) { screens_message(a, ST_CAMERA, "Camera", "Camera nao disponivel neste hardware/firmware."); return; }
     camera_view_t *c = calloc(1, sizeof(*c));
     if (!c) return;
-    c->base = (view_t){ST_CAMERA, true, cam_key_wrap, cam_render, NULL, cam_dispose};
+    c->base = (view_t){ST_CAMERA, true, cam_key_wrap, cam_render, cam_tick, cam_dispose};
     c->res = (cam_res_t)(a->set.resolution < CAM_RES_COUNT ? a->set.resolution : CAM_RES_SVGA);
     app_push(a, &c->base);
     a->p.cam->start(a->p.cam, c->res, a->set.jpeg_quality);

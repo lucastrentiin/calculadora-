@@ -36,12 +36,12 @@ static int nvs_erase_cb(kv_store_t *kv, const char *key)
     return e == ESP_OK ? KV_OK : KV_ERR;
 }
 
-kv_store_t *kv_nvs_open(const char *ns)
+kv_store_t *kv_nvs_open(const char *partition, const char *ns)
 {
     kv_store_t *kv = calloc(1, sizeof(*kv));
     nvs_ctx_t *c = calloc(1, sizeof(*c));
     if (!kv || !c) { free(kv); free(c); return NULL; }
-    if (nvs_open(ns, NVS_READWRITE, &c->h) != ESP_OK) { free(kv); free(c); return NULL; }
+    if (nvs_open_from_partition(partition, ns, NVS_READWRITE, &c->h) != ESP_OK) { free(kv); free(c); return NULL; }
     kv->get = nvs_get_cb;
     kv->set = nvs_set_cb;
     kv->erase = nvs_erase_cb;

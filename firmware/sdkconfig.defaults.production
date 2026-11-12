@@ -1,0 +1,14 @@
+# Production hardening (apply together with sdkconfig.defaults):
+#   idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.production" build
+# WARNING: Secure Boot and Flash Encryption burn eFuses irreversibly.
+# Read docs/SECURITY.md and test on a sacrificial board first.
+CONFIG_SECURE_BOOT=y
+CONFIG_SECURE_BOOT_V2_ENABLED=y
+CONFIG_SECURE_BOOT_SIGNING_KEY="secure_boot_signing_key.pem"
+CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT=n
+CONFIG_SECURE_FLASH_ENC_ENABLED=y
+CONFIG_SECURE_FLASH_ENCRYPTION_MODE_RELEASE=y
+CONFIG_NVS_ENCRYPTION=y
+CONFIG_SECURE_ENABLE_SECURE_ROM_DL_MODE=y
+CONFIG_LOG_DEFAULT_LEVEL_WARN=y
+CONFIG_MT_ALLOW_HTTP=n

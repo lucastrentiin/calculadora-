@@ -31,7 +31,8 @@ void kv_memory_destroy(kv_store_t *kv);
 /** Test hook: make every write fail (simulates full flash / power loss). */
 void kv_memory_fail_writes(kv_store_t *kv, bool fail);
 #ifdef ESP_PLATFORM
-kv_store_t *kv_nvs_open(const char *nvs_namespace);
+/** Open a namespace in an NVS partition (e.g. "mtdata"); the partition must be initialised first. */
+kv_store_t *kv_nvs_open(const char *partition, const char *nvs_namespace);
 #endif
 
 typedef enum { RESP_FAST = 0, RESP_SHORT = 1, RESP_FULL = 2 } resp_mode_t;

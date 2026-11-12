@@ -118,6 +118,8 @@ int ai_sign(const uint8_t key[32], const char *method, const char *path, const c
 ai_transport_t *ai_transport_esp_create(const char *ca_pem_or_null);
 /** Start the worker task. */
 int ai_client_start_worker(ai_client_t *c, uint32_t stack, int prio);
+/** Notify the worker that a job or a remote cancellation is pending. */
+void ai_client_wake_worker(void);
 #endif
 
 #ifdef __cplusplus

@@ -40,7 +40,9 @@ int wifi_saved_remove(wifi_saved_t *s, const char *ssid);
 uint32_t wifi_backoff_ms(uint32_t failures);
 
 #ifdef ESP_PLATFORM
-wifi_hal_t *wifi_manager_start(void);
+#include "settings.h"
+/** Start the manager; saved networks are kept in `kv` (encrypted NVS partition). */
+wifi_hal_t *wifi_manager_start(kv_store_t *kv);
 /** Start phone provisioning (SoftAP + protocomm). pop = proof-of-possession shown on the LCD. */
 int wifi_manager_start_provisioning(char pop_out[9]);
 #endif
