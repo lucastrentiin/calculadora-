@@ -211,7 +211,7 @@ static const char *field_key_text(keycode_t k, bool shift, uint8_t type)
 
 bool form_num(form_view_t *f, int i, double *out)
 {
-    me_ctx_t ctx = {ME_ANGLE_RAD, NULL, 0};
+    me_ctx_t ctx = {.angle = ME_ANGLE_RAD, .vars = NULL, .nvars = 0};
     if (!f->f[i].text[0]) { snprintf(f->error, sizeof(f->error), "falta %s", f->f[i].label); return false; }
     me_err_t e = me_eval(f->f[i].text, &ctx, out);
     if (e != ME_OK) { snprintf(f->error, sizeof(f->error), "%s: %s", f->f[i].label, me_err_text(e)); return false; }

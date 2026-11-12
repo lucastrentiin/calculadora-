@@ -36,13 +36,13 @@ kv_store_t *kv_nvs_open(const char *partition, const char *nvs_namespace);
 #endif
 
 typedef enum { RESP_FAST = 0, RESP_SHORT = 1, RESP_FULL = 2 } resp_mode_t;
-typedef enum { COMBO_SSAA = 0, COMBO_ASAS = 1, COMBO_MMSS = 2, COMBO_COUNT } auth_combo_t;
+typedef enum { COMBO_SSAA = 0, COMBO_ASAS = 1, COMBO_AASS = 2, COMBO_COUNT } auth_combo_t;
 
-#define SETTINGS_VERSION 2
+#define SETTINGS_VERSION 3
 
 typedef struct {
     uint8_t version;
-    uint8_t angle_deg;       /* 1 = degrees */
+    uint8_t angle_deg;       /* me_angle_t: 0 rad, 1 deg, 2 grad (name kept for compatibility) */
     uint8_t response_mode;   /* resp_mode_t */
     char text_method;        /* 'A' or 'B' */
     bool large_font, simple_menus, invert, ai_history, calc_history;
@@ -54,6 +54,9 @@ typedef struct {
     uint8_t auth_combo;      /* auth_combo_t */
     uint8_t jpeg_quality;    /* esp32-camera scale: lower = better */
     uint8_t resolution;      /* index into camera resolution table */
+    /* NORMAL-mode calculator (MODE menus), see calculator.h */
+    uint8_t calc_mode, calc_reg, calc_disp, calc_digits;
+    bool calc_frac_dc, calc_dec_comma;
 } settings_t;
 
 void settings_defaults(settings_t *s);

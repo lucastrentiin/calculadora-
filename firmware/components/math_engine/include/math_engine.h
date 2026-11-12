@@ -30,7 +30,7 @@ typedef enum {
     ME_ERR_DEPTH,
 } me_err_t;
 
-typedef enum { ME_ANGLE_RAD = 0, ME_ANGLE_DEG = 1 } me_angle_t;
+typedef enum { ME_ANGLE_RAD = 0, ME_ANGLE_DEG = 1, ME_ANGLE_GRAD = 2 } me_angle_t;
 
 typedef struct {
     const char *name;
@@ -41,6 +41,16 @@ typedef struct {
     me_angle_t angle;
     const me_var_t *vars;
     size_t nvars;
+    /* Optional hooks (NULL = feature unavailable -> ME_ERR_UNKNOWN):
+     *   set_var: Pol(/Rec( store their second results in E and F (fx-82MS behaviour)
+     *   random:  Ran# (0.000..0.999)
+     *   round:   Rnd( rounds to the current display format (Fix/Sci/Norm) */
+    void (*set_var)(void *user, const char *name, double v);
+    double (*random)(void *user);
+    double (*round)(void *user, double v);
+    /* x̂ / ŷ postfix estimates of REG mode: which = 0 xhat, 1 xhat1, 2 xhat2, 3 yhat */
+    me_err_t (*estimate)(void *user, int which, double v, double *out);
+    void *user;
 } me_ctx_t;
 
 /** Evaluate an expression. On error *out is untouched. */
@@ -61,7 +71,10 @@ typedef void (*me_step_cb)(const char *rule, const char *expr, void *user);
 /** Step-by-step reduction (leftmost innermost operation first). */
 me_err_t me_solve_steps(const char *expr, const me_ctx_t *ctx, me_step_cb cb, void *user, double *out, bool *truncated);
 
-/** Copy `src` replacing display glyphs (×, ÷, π, √, ², ³, −) by ASCII syntax. */
+/** Copy `src` replacing display glyphs by ASCII syntax:
+ *  × · -> *, ÷ -> /, − -> -, π -> pi, √ -> sqrt, ² ³ -> ^2 ^3, ∛ -> cbrt,
+ *  ┘ -> | (fraction a|b|c), ° -> @ (sexagesimal d@m@s@),
+ *  ᵒ ʳ ᵍ -> { } ~ (angle-unit suffixes of DRG►), Ran# -> Ran_ */
 me_err_t me_normalize(const char *src, char *dst, size_t len);
 
 #ifdef __cplusplus

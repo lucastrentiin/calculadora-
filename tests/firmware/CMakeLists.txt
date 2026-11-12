@@ -44,7 +44,7 @@ if(MT_SANITIZE)
   target_link_options(mt_portable PUBLIC -fsanitize=address,undefined)
 endif()
 
-foreach(t math_engine ui_core security_storage ai_client app_state)
+foreach(t math_engine ui_core security_storage ai_client app_state calculator)
   add_executable(test_${t} src/test_${t}.c)
   target_link_libraries(test_${t} PRIVATE mt_portable)
   target_compile_options(test_${t} PRIVATE -Wall -Wextra -Wno-unused-parameter)

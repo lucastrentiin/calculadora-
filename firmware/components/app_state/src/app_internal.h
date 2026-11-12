@@ -18,6 +18,8 @@ layout_t app_layout1(const app_t *a);
 uint32_t app_now(const app_t *a);
 void app_flash(app_t *a, const char *msg);
 void app_save_settings(app_t *a);
+void calc_cfg_from_settings(app_t *a);
+void calc_cfg_to_settings(app_t *a);
 
 /* ------------------------------ menu ------------------------------ */
 typedef struct menu_view menu_view_t;

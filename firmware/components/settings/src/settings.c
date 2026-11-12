@@ -25,6 +25,7 @@ void settings_defaults(settings_t *s)
 static bool valid(const settings_t *s)
 {
     return s->version == SETTINGS_VERSION && s->response_mode <= RESP_FULL && (s->text_method == 'A' || s->text_method == 'B') &&
+           s->angle_deg <= 2 && s->calc_mode <= 2 && s->calc_reg <= 5 && s->calc_disp <= 3 && s->calc_digits <= 9 &&
            s->scroll_step >= 1 && s->scroll_step <= 3 && s->key_repeat <= 3 && s->auth_combo < COMBO_COUNT &&
            s->multitap_ms >= 300 && s->multitap_ms <= 3000 && s->auto_lock_s >= 15 && s->resolution < 6;
 }

@@ -9,7 +9,7 @@ static const char *const STATE_NAMES[ST_COUNT] = {
 static const keycode_t COMBOS[COMBO_COUNT][4] = {
     {KEY_SHIFT, KEY_SHIFT, KEY_ALPHA, KEY_ALPHA},
     {KEY_ALPHA, KEY_SHIFT, KEY_ALPHA, KEY_SHIFT},
-    {KEY_MODE, KEY_MODE, KEY_SHIFT, KEY_SHIFT},
+    {KEY_ALPHA, KEY_ALPHA, KEY_SHIFT, KEY_SHIFT}, /* MODE is a real key in NORMAL (fx-82MS menus) */
 };
 #define COMBO_WINDOW_MS 3000
 #define AUTH_TIMEOUT_MS 30000
@@ -136,6 +136,8 @@ void app_init(app_t *a, const app_platform_t *p)
     if (!a->p.height) a->p.height = 32;
     settings_load(a->p.kv, &a->set);
     calc_init(&a->calc);
+    calc_cfg_from_settings(a);
+    calc_load(&a->calc, a->p.kv);
     auth_init(&a->auth, a->p.kv, a->p.auth_policy.iterations ? &a->p.auth_policy : NULL, app_now(a) / 1000);
     a->last_activity = app_now(a);
     pm_policy_t pol = {a->set.sleep_s, 60, 15, 3, 3300};
@@ -286,24 +288,39 @@ void app_key(app_t *a, keycode_t k)
     view_t *top = app_top(a);
     if (k == KEY_SHIFT) { a->shift = !a->shift; return; }
     if (k == KEY_ALPHA && !(top && top->state == ST_TEXT_ENTRY)) { a->alpha = !a->alpha; return; }
-    bool shift = a->shift;
+    bool shift = a->shift, alpha = a->alpha;
     a->shift = a->alpha = false;
     if (top) { top->on_key(top, a, k, shift); return; }
-    switch (k) {
-    case KEY_MODE: a->set.angle_deg = !a->set.angle_deg; app_save_settings(a); return;
-    case KEY_MENU: app_open_tools(a, false); return;
-    case KEY_EQ:
-        if (shift) {
-            char e[ME_MAX_LEN + 1];
-            calc_expr(&a->calc, e, sizeof(e));
-            if (!e[0] && a->calc.nhist) snprintf(e, sizeof(e), "%s", a->calc.history[0].expr);
-            screens_open_steps(a, e, false);
-            return;
-        }
-        break;
-    default: break;
-    }
-    calc_key(&a->calc, k, shift, a->set.angle_deg ? ME_ANGLE_DEG : ME_ANGLE_RAD);
+    /* MENU is the only key added to the fx-82MS layout: offline tools (steps, solvers, formulas...) */
+    if (k == KEY_MENU && !a->calc.menu) { app_open_tools(a, false); return; }
+    calc_key(&a->calc, k, shift, alpha);
+    if (a->calc.cfg_dirty) { a->calc.cfg_dirty = false; calc_cfg_to_settings(a); app_save_settings(a); }
+    if (a->calc.state_dirty) { a->calc.state_dirty = false; calc_save(&a->calc, a->p.kv); }
+    if (a->calc.off_request) { a->calc.off_request = false; calc_clear(&a->calc); a->asleep = true; } /* SHIFT AC = OFF */
+}
+
+void calc_cfg_from_settings(app_t *a)
+{
+    calc_cfg_t *c = &a->calc.cfg;
+    c->angle = a->set.angle_deg;
+    c->mode = a->set.calc_mode;
+    c->reg = a->set.calc_reg;
+    c->disp = a->set.calc_disp;
+    c->digits = a->set.calc_digits;
+    c->frac_dc = a->set.calc_frac_dc;
+    c->dec_comma = a->set.calc_dec_comma;
+}
+
+void calc_cfg_to_settings(app_t *a)
+{
+    const calc_cfg_t *c = &a->calc.cfg;
+    a->set.angle_deg = c->angle;
+    a->set.calc_mode = c->mode;
+    a->set.calc_reg = c->reg;
+    a->set.calc_disp = c->disp;
+    a->set.calc_digits = c->digits;
+    a->set.calc_frac_dc = c->frac_dc;
+    a->set.calc_dec_comma = c->dec_comma;
 }
 
 /* ------------------------------ tick ------------------------------- */
@@ -339,11 +356,9 @@ static void render_normal(app_t *a, fb_t *fb)
 {
     layout_t L = app_layout(a);
     uint32_t now = app_now(a);
-    fb_tiny(fb, 1, 0, a->set.angle_deg ? "D" : "R");
-    if (a->shift) fb_tiny(fb, 7, 0, "S");
-    if (a->alpha) fb_tiny(fb, 13, 0, "A");
-    if (a->calc.mem != 0) fb_tiny(fb, 19, 0, "M");
-    if (a->calc.show_fraction) fb_tiny(fb, 25, 0, "F");
+    char ind[48];
+    calc_indicators(&a->calc, a->shift, a->alpha, ind, sizeof(ind));
+    fb_tiny(fb, 1, 0, ind);
     battery_reading_t b = {0};
     if (a->p.battery && a->p.battery(&b) && b.supported) {
         int x = fb->width - 16;

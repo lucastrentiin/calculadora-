@@ -5,8 +5,10 @@
  *   term    := unary (('*'|'/') unary | <implicit> unary)*
  *   unary   := ('-'|'+') unary | power
  *   power   := postfix ('^' unary)?
- *   postfix := primary ('!'|'%')*
+ *   comb    := unary (('nCr'|'nPr') unary)*         (fx-82MS infix, binds tighter than * /)
+ *   postfix := primary ('!'|'%'|'{'|'}'|'~')*         ({ } ~ = degree/radian/grad suffix)
  *   primary := number | const | var | func '(' args ')' | '(' expr ')'
+ *   number  := digits ['.' digits] ['E' exp] [('|' digits){1,2}] | d '@' m ['@' s] ['@']
  */
 #include "math_engine.h"
 
@@ -44,7 +46,7 @@ typedef struct {
 /* AST                                                                */
 /* ------------------------------------------------------------------ */
 
-typedef enum { N_NUM, N_PAREN, N_CONST, N_VAR, N_NEG, N_FACT, N_PCT, N_FN, N_BIN } node_type_t;
+typedef enum { N_NUM, N_PAREN, N_CONST, N_VAR, N_NEG, N_FACT, N_PCT, N_FN, N_BIN, N_ANG, N_EST } node_type_t;
 
 typedef struct {
     uint8_t type;
@@ -77,11 +79,13 @@ static const func_t FUNCS[] = {
     {"ln", 1, 1, "Logaritmo natural"}, {"log", 1, 2, "Logaritmo"}, {"log2", 1, 1, "Logaritmo base 2"},
     {"exp", 1, 1, "Exponencial"}, {"abs", 1, 1, "Valor absoluto"}, {"floor", 1, 1, "Piso"},
     {"ceil", 1, 1, "Teto"}, {"round", 1, 1, "Arredondamento"}, {"nCr", 2, 2, "Combinacao"}, {"nPr", 2, 2, "Arranjo"},
+    {"Rnd", 1, 1, "Arredondamento (formato)"}, {"Pol", 2, 2, "Retangular para polar"}, {"Rec", 2, 2, "Polar para retangular"},
 };
 #define NFUNCS (sizeof(FUNCS) / sizeof(FUNCS[0]))
 
 enum { F_SIN, F_COS, F_TAN, F_ASIN, F_ACOS, F_ATAN, F_SINH, F_COSH, F_TANH, F_ASINH, F_ACOSH, F_ATANH,
-       F_SQRT, F_CBRT, F_ROOT, F_LN, F_LOG, F_LOG2, F_EXP, F_ABS, F_FLOOR, F_CEIL, F_ROUND, F_NCR, F_NPR };
+       F_SQRT, F_CBRT, F_ROOT, F_LN, F_LOG, F_LOG2, F_EXP, F_ABS, F_FLOOR, F_CEIL, F_ROUND, F_NCR, F_NPR,
+       F_RND, F_POL, F_REC };
 
 const char *me_err_text(me_err_t e)
 {
@@ -114,6 +118,13 @@ me_err_t me_normalize(const char *s, char *d, size_t len)
         {"\xE2\x88\x9A", "sqrt"},    /* √ */
         {"\xC2\xB2", "^2"},          /* ² */
         {"\xC2\xB3", "^3"},          /* ³ */
+        {"\xE2\x88\x9B", "cbrt("},  /* ∛ */
+        {"\xE2\x94\x98", "|"},      /* ┘ fraction separator */
+        {"\xC2\xB0", "@"},           /* ° sexagesimal separator */
+        {"\xE1\xB5\x92", "{"},      /* ᵒ degree suffix */
+        {"\xCA\xB3", "}"},           /* ʳ radian suffix */
+        {"\xE1\xB5\x8D", "~"},      /* ᵍ grad suffix */
+        {"Ran#", "Ran_"},
     };
     size_t o = 0;
     while (*s) {
@@ -166,8 +177,33 @@ static me_err_t tokenize(parser_t *P)
             if (l >= (int)sizeof(buf)) return ME_ERR_TOO_LONG;
             memcpy(buf, s + start, (size_t)l);
             buf[l] = 0;
+            double v = strtod(buf, NULL);
+            if (s[i] == '|' || s[i] == '@') {
+                /* fraction a|b or a|b|c, or sexagesimal d@m@s@ (fx-82MS input forms) */
+                char sep = s[i];
+                double part[3] = {v, 0, 0};
+                int np = 1;
+                while (s[i] == sep && np < 3) {
+                    int j = i + 1;
+                    if (!isdigit((unsigned char)s[j]) && !(s[j] == '.' && sep == '@')) break;
+                    char *end;
+                    part[np++] = strtod(s + j, &end);
+                    i = (int)(end - s);
+                }
+                if (sep == '@') {
+                    if (s[i] == '@') i++; /* trailing degree mark */
+                    if (np == 1 && s[start + l] != '@') return ME_ERR_SYNTAX;
+                    v = part[0] + part[1] / 60.0 + part[2] / 3600.0;
+                } else {
+                    if (np < 2) return ME_ERR_SYNTAX;
+                    if (s[i] == '|') return ME_ERR_SYNTAX;
+                    double den = np == 3 ? part[2] : part[1];
+                    if (den == 0) return ME_ERR_DIV_ZERO;
+                    v = np == 3 ? part[0] + part[1] / den : part[0] / den;
+                }
+            }
             P->toks[n].type = T_NUM;
-            P->toks[n].num = strtod(buf, NULL);
+            P->toks[n].num = v;
             P->toks[n].pos = (uint16_t)start;
             n++;
             continue;
@@ -175,13 +211,15 @@ static me_err_t tokenize(parser_t *P)
         if (isalpha((unsigned char)c) || c == '_') {
             int start = i;
             while (isalnum((unsigned char)s[i]) || s[i] == '_') i++;
+            /* infix nCr/nPr followed directly by digits/letters: "5nCr2" */
+            if (i - start > 3 && s[start] == 'n' && (s[start + 1] == 'C' || s[start + 1] == 'P') && s[start + 2] == 'r') i = start + 3;
             P->toks[n].type = T_ID;
             P->toks[n].pos = (uint16_t)start;
             P->toks[n].len = (uint16_t)(i - start);
             n++;
             continue;
         }
-        if (strchr("+-*/^!%", c)) { P->toks[n].type = T_OP; P->toks[n].op = c; P->toks[n].pos = (uint16_t)i; n++; i++; continue; }
+        if (strchr("+-*/^!%{}~", c)) { P->toks[n].type = T_OP; P->toks[n].op = c; P->toks[n].pos = (uint16_t)i; n++; i++; continue; }
         if (c == '(') { P->toks[n].type = T_LP; n++; i++; continue; }
         if (c == ')') { P->toks[n].type = T_RP; n++; i++; continue; }
         if (c == ',' || c == ';') { P->toks[n].type = T_COMMA; n++; i++; continue; }
@@ -249,6 +287,7 @@ static int parse_primary(parser_t *P)
     if (t->type == T_ID) {
         for (size_t f = 0; f < NFUNCS; f++) {
             if (!id_eq(P, t, FUNCS[f].name)) continue;
+            if ((f == F_NCR || f == F_NPR) && peek(P)->type != T_LP) break; /* infix form handled by parse_comb */
             if (peek(P)->type != T_LP) { P->err = ME_ERR_SYNTAX; return -1; }
             next(P);
             int args[2] = {-1, -1}, na = 0;
@@ -275,9 +314,9 @@ static int parse_primary(parser_t *P)
             P->nodes[n].b = (int16_t)args[1];
             return n;
         }
-        if (id_eq(P, t, "pi") || id_eq(P, t, "e")) {
+        if (id_eq(P, t, "pi") || id_eq(P, t, "e") || id_eq(P, t, "Ran_")) {
             int n = new_node(P, N_CONST);
-            if (n >= 0) P->nodes[n].fn = id_eq(P, t, "pi") ? 0 : 1;
+            if (n >= 0) P->nodes[n].fn = id_eq(P, t, "pi") ? 0 : id_eq(P, t, "e") ? 1 : 2;
             return n;
         }
         if (t->len >= sizeof(((node_t *)0)->name)) { P->err = ME_ERR_UNKNOWN; return -1; }
@@ -296,11 +335,27 @@ static int parse_primary(parser_t *P)
 static int parse_postfix(parser_t *P)
 {
     int a = parse_primary(P);
-    while (!P->err && peek(P)->type == T_OP && (peek(P)->op == '!' || peek(P)->op == '%')) {
+    static const char *const EST[] = {"xhat", "xhat1", "xhat2", "yhat"};
+    for (;;) {
+        if (P->err) return -1;
+        const tok_t *t = peek(P);
+        int w = -1;
+        for (int i = 0; t->type == T_ID && i < 4; i++) if (id_eq(P, t, EST[i])) w = i;
+        if (w >= 0) {
+            next(P);
+            int n = new_node(P, N_EST);
+            if (n < 0) return -1;
+            P->nodes[n].a = (int16_t)a;
+            P->nodes[n].fn = (uint8_t)w;
+            a = n;
+            continue;
+        }
+        if (!(t->type == T_OP && strchr("!%{}~", t->op))) break;
         char op = next(P)->op;
-        int n = new_node(P, op == '!' ? N_FACT : N_PCT);
+        int n = new_node(P, op == '!' ? N_FACT : op == '%' ? N_PCT : N_ANG);
         if (n < 0) return -1;
         P->nodes[n].a = (int16_t)a;
+        P->nodes[n].op = op;
         a = n;
     }
     return a;
@@ -342,16 +397,39 @@ static int parse_unary(parser_t *P)
     return parse_power(P);
 }
 
-static int parse_term(parser_t *P)
+static bool is_infix_comb(parser_t *P)
+{
+    const tok_t *t = peek(P);
+    if (t->type != T_ID || !(id_eq(P, t, "nCr") || id_eq(P, t, "nPr"))) return false;
+    return P->toks[P->p + 1].type != T_LP;
+}
+
+static int parse_comb(parser_t *P)
 {
     int left = parse_unary(P);
+    while (!P->err && is_infix_comb(P)) {
+        char op = id_eq(P, next(P), "nCr") ? 'C' : 'P';
+        int right = parse_unary(P);
+        int n = new_node(P, N_BIN);
+        if (n < 0) return -1;
+        P->nodes[n].op = op;
+        P->nodes[n].a = (int16_t)left;
+        P->nodes[n].b = (int16_t)right;
+        left = n;
+    }
+    return left;
+}
+
+static int parse_term(parser_t *P)
+{
+    int left = parse_comb(P);
     while (!P->err) {
         const tok_t *t = peek(P);
         char op;
         if (t->type == T_OP && (t->op == '*' || t->op == '/')) { op = t->op; next(P); }
         else if (t->type == T_NUM || t->type == T_ID || t->type == T_LP) op = '*'; /* implicit */
         else break;
-        int right = parse_unary(P);
+        int right = parse_comb(P);
         int n = new_node(P, N_BIN);
         if (n < 0) return -1;
         P->nodes[n].op = op;
@@ -414,8 +492,24 @@ static me_err_t chk(double v, double *out)
     return ME_OK;
 }
 
-static double to_rad(double x, const me_ctx_t *c) { return (c && c->angle == ME_ANGLE_DEG) ? fmod(x, 360.0) * M_PI / 180.0 : x; }
-static double from_rad(double x, const me_ctx_t *c) { return (c && c->angle == ME_ANGLE_DEG) ? x * 180.0 / M_PI : x; }
+static double to_rad(double x, const me_ctx_t *c)
+{
+    if (c && c->angle == ME_ANGLE_DEG) return fmod(x, 360.0) * M_PI / 180.0;
+    if (c && c->angle == ME_ANGLE_GRAD) return fmod(x, 400.0) * M_PI / 200.0;
+    return x;
+}
+static double from_rad(double x, const me_ctx_t *c)
+{
+    if (c && c->angle == ME_ANGLE_DEG) return x * 180.0 / M_PI;
+    if (c && c->angle == ME_ANGLE_GRAD) return x * 200.0 / M_PI;
+    return x;
+}
+/* DRG► suffix: value given in unit u ('{' deg, '}' rad, '~' grad) converted to the current angle unit */
+static double angle_to_current(double x, char u, const me_ctx_t *c)
+{
+    double r = u == '{' ? x * M_PI / 180.0 : u == '~' ? x * M_PI / 200.0 : x;
+    return from_rad(r, c);
+}
 
 static me_err_t factorial(double n, double *out)
 {
@@ -503,6 +597,23 @@ static me_err_t apply_fn(int f, const double *x, int nargs, const me_ctx_t *c, d
         *out = round(res);
         return ME_OK;
     }
+    case F_RND:
+        *out = (c && c->round) ? c->round(c->user, v) : v;
+        return ME_OK;
+    case F_POL: {
+        double x0 = x[0], y0 = x[1];
+        double r = hypot(x0, y0), th = from_rad(atan2(y0, x0), c);
+        if (c && c->set_var) { c->set_var(c->user, "E", r); c->set_var(c->user, "F", th); }
+        *out = r;
+        return ME_OK;
+    }
+    case F_REC: {
+        double r = x[0], th = to_rad(x[1], c);
+        double xr = snap(r * cos(th)), yr = snap(r * sin(th));
+        if (c && c->set_var) { c->set_var(c->user, "E", xr); c->set_var(c->user, "F", yr); }
+        *out = xr;
+        return ME_OK;
+    }
     }
     return ME_ERR_UNKNOWN;
 }
@@ -511,7 +622,7 @@ static me_err_t lookup(const me_ctx_t *c, const char *name, double *out)
 {
     for (size_t i = 0; c && i < c->nvars; i++) {
         if (strcmp(c->vars[i].name, name) == 0) {
-            if (!isfinite(c->vars[i].value)) return ME_ERR_UNKNOWN;
+            if (!isfinite(c->vars[i].value)) return ME_ERR_DOMAIN; /* e.g. statistic without enough data */
             *out = c->vars[i].value;
             return ME_OK;
         }
@@ -527,6 +638,7 @@ static me_err_t binop(char op, double a, double b, double *out)
     case '*': *out = a * b; return ME_OK;
     case '/': if (b == 0) return ME_ERR_DIV_ZERO; *out = a / b; return ME_OK;
     case '^': return power(a, b, out);
+    case 'C': case 'P': { double x[2] = {a, b}; return apply_fn(op == 'C' ? F_NCR : F_NPR, x, 2, NULL, out); }
     }
     return ME_ERR_SYNTAX;
 }
@@ -540,8 +652,21 @@ static me_err_t eval_node(const parser_t *P, int i, double *out)
     switch (n->type) {
     case N_NUM: *out = n->v; return ME_OK;
     case N_PAREN: return eval_node(P, n->a, out);
-    case N_CONST: *out = n->fn == 0 ? M_PI : M_E; return ME_OK;
+    case N_CONST:
+        if (n->fn == 2) {
+            if (!c || !c->random) return ME_ERR_UNKNOWN;
+            *out = floor(c->random(c->user) * 1000.0) / 1000.0;
+            return ME_OK;
+        }
+        *out = n->fn == 0 ? M_PI : M_E;
+        return ME_OK;
     case N_VAR: return lookup(c, n->name, out);
+    case N_ANG: if ((e = eval_node(P, n->a, &a))) return e; return chk(angle_to_current(a, n->op, c), out);
+    case N_EST:
+        if ((e = eval_node(P, n->a, &a))) return e;
+        if (!c || !c->estimate) return ME_ERR_SYNTAX;
+        if ((e = c->estimate(c->user, n->fn, a, &r))) return e;
+        return chk(r, out);
     case N_NEG: if ((e = eval_node(P, n->a, &a))) return e; return chk(-a, out);
     case N_FACT: if ((e = eval_node(P, n->a, &a))) return e; if ((e = factorial(a, &r))) return e; return chk(r, out);
     case N_PCT: if ((e = eval_node(P, n->a, &a))) return e; return chk(a / 100.0, out);
@@ -669,7 +794,7 @@ static int prec(const parser_t *P, int i)
     switch (n->type) {
     case N_BIN: return (n->op == '+' || n->op == '-') ? 1 : n->op == '^' ? 4 : 2;
     case N_NEG: return 3;
-    case N_FACT: case N_PCT: return 5;
+    case N_FACT: case N_PCT: case N_ANG: case N_EST: return 5;
     case N_NUM: return n->v < 0 ? 3 : 6;
     default: return 6;
     }
@@ -691,8 +816,10 @@ static void print_node(const parser_t *P, int i, sb_t *s)
     switch (n->type) {
     case N_NUM: me_format(n->v, 10, num, sizeof(num)); sb_put(s, num); return;
     case N_PAREN: sb_put(s, "("); print_node(P, n->a, s); sb_put(s, ")"); return;
-    case N_CONST: sb_put(s, n->fn == 0 ? "pi" : "e"); return;
+    case N_CONST: sb_put(s, n->fn == 0 ? "pi" : n->fn == 1 ? "e" : "Ran#"); return;
     case N_VAR: sb_put(s, n->name); return;
+    case N_EST: { static const char *const EN[] = {"xhat", "xhat1", "xhat2", "yhat"}; wrap(P, n->a, prec(P, n->a) < 6, s); sb_put(s, EN[n->fn]); return; }
+    case N_ANG: wrap(P, n->a, prec(P, n->a) < 6, s); sb_put(s, n->op == '{' ? "\xE1\xB5\x92" : n->op == '}' ? "\xCA\xB3" : "\xE1\xB5\x8D"); return;
     case N_NEG: {
         const node_t *c = &P->nodes[n->a];
         sb_put(s, "-");
@@ -711,7 +838,8 @@ static void print_node(const parser_t *P, int i, sb_t *s)
     case N_BIN: {
         int p = prec(P, i);
         const node_t *bn = &P->nodes[n->b];
-        char op[2] = {n->op, 0};
+        char op[8] = {n->op, 0};
+        if (n->op == 'C' || n->op == 'P') snprintf(op, sizeof(op), " n%cr ", n->op);
         if (n->op == '^') {
             wrap(P, n->a, prec(P, n->a) <= 4, s);
             sb_put(s, op);
@@ -736,6 +864,8 @@ static const char *op_rule(char op)
     case '*': return "Multiplicacao";
     case '/': return "Divisao";
     case '^': return "Potencia";
+    case 'C': return "Combinacao";
+    case 'P': return "Arranjo";
     }
     return "Calculo";
 }
@@ -789,6 +919,8 @@ static int reduce_once(parser_t *P, int i, char *rule, size_t rlen)
     else if (n->type == N_NEG) name = "Sinal";
     else if (n->type == N_FACT) name = "Fatorial";
     else if (n->type == N_PCT) name = "Porcentagem";
+    else if (n->type == N_ANG) name = "Conversao angular";
+    else if (n->type == N_EST) name = "Estimativa";
     else if (n->type == N_CONST || n->type == N_VAR) name = "Substituicao";
     else name = "Calculo";
     snprintf(rule, rlen, "%s: %.*s = %s", name, 96, before, vs);
@@ -801,8 +933,8 @@ static void substitute(parser_t *P, int i, char *list, size_t len)
     node_t *n = &P->nodes[i];
     if (n->type == N_CONST || n->type == N_VAR) {
         double v = 0;
-        const char *name = n->type == N_CONST ? (n->fn == 0 ? "pi" : "e") : n->name;
-        if (n->type == N_CONST) v = n->fn == 0 ? M_PI : M_E;
+        const char *name = n->type == N_CONST ? (n->fn == 0 ? "pi" : n->fn == 1 ? "e" : "Ran#") : n->name;
+        if (n->type == N_CONST) eval_node(P, i, &v);
         else lookup(P->ctx, n->name, &v);
         char item[48], vs[32];
         me_format(v, 10, vs, sizeof(vs));

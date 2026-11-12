@@ -70,7 +70,7 @@ air_verify_t air_verify(const air_t *r, char *text, size_t len)
     const cJSON *exp = cJSON_IsObject(chk) ? cJSON_GetObjectItemCaseSensitive(chk, "expected") : NULL;
     if (!expr || !cJSON_IsNumber(exp) || strlen(expr) > 256) { snprintf(text, len, "Sem verificacao local disponivel"); return AIR_VERIFY_NONE; }
     const char *ang = str(chk, "angle");
-    me_ctx_t ctx = {ang && !strcmp(ang, "deg") ? ME_ANGLE_DEG : ME_ANGLE_RAD, NULL, 0};
+    me_ctx_t ctx = {.angle = ang && !strcmp(ang, "deg") ? ME_ANGLE_DEG : ME_ANGLE_RAD, .vars = NULL, .nvars = 0};
     double v;
     me_err_t e = me_eval(expr, &ctx, &v);
     if (e != ME_OK) { snprintf(text, len, "Verificacao local falhou: %s", me_err_text(e)); return AIR_VERIFY_ERROR; }

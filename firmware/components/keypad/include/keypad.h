@@ -19,7 +19,8 @@ extern "C" {
     X(DOT) X(EXP) X(ANS) X(ADD) X(SUB) X(MUL) X(DIV) X(POW) X(SQR) X(SQRT) X(NEG) \
     X(LPAREN) X(RPAREN) X(SIN) X(COS) X(TAN) X(LOG) X(LN) X(PI) X(PERCENT) X(INV) X(VARX) \
     X(FRAC) X(STO) X(RCL) X(EQ) X(DEL) X(AC) X(ON) X(SHIFT) X(ALPHA) X(MODE) X(MENU) \
-    X(UP) X(DOWN) X(LEFT) X(RIGHT) X(COMMA)
+    X(UP) X(DOWN) X(LEFT) X(RIGHT) X(COMMA) \
+    X(HYP) X(DMS) X(ENG) X(NCR) X(POL) X(CUBE)
 
 #define KEY_ENUM(n) KEY_##n,
 typedef enum { KEY_LIST(KEY_ENUM) KEY_COUNT } key_t_;

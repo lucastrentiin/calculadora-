@@ -1,8 +1,8 @@
 #include "mt_test.h"
 #include "math_engine.h"
 
-static const me_ctx_t DEG = {ME_ANGLE_DEG, NULL, 0};
-static const me_ctx_t RAD = {ME_ANGLE_RAD, NULL, 0};
+static const me_ctx_t DEG = {.angle = ME_ANGLE_DEG, .vars = NULL, .nvars = 0};
+static const me_ctx_t RAD = {.angle = ME_ANGLE_RAD, .vars = NULL, .nvars = 0};
 
 static double V(const char *e, const me_ctx_t *c) { double v = NAN; me_err_t r = me_eval(e, c, &v); if (r) printf("  erro em %s: %s\n", e, me_err_text(r)); return v; }
 static me_err_t E(const char *e, const me_ctx_t *c) { double v; return me_eval(e, c, &v); }
@@ -40,7 +40,7 @@ TEST(functions) {
 }
 TEST(variables) {
     me_var_t vars[] = {{"Ans", 21}, {"M", 4}};
-    me_ctx_t c = {ME_ANGLE_RAD, vars, 2};
+    me_ctx_t c = {.angle = ME_ANGLE_RAD, .vars = vars, .nvars = 2};
     CHECK_NEAR(V("Ans*2+M", &c), 46, 0);
     CHECK_INT(E("foo", &c), ME_ERR_UNKNOWN);
 }
@@ -93,7 +93,7 @@ TEST(steps) {
     CHECK(strstr(s.rules[2], "Potencia") != NULL);
     memset(&s, 0, sizeof s);
     me_var_t r[] = {{"r", 2}};
-    me_ctx_t c = {ME_ANGLE_RAD, r, 1};
+    me_ctx_t c = {.angle = ME_ANGLE_RAD, .vars = r, .nvars = 1};
     CHECK_INT(me_solve_steps("2*pi*r", &c, cb, &s, &v, &tr), ME_OK);
     CHECK(strstr(s.rules[1], "Substituicao") != NULL);
     CHECK_NEAR(v, 4 * 3.14159265358979, 1e-12);
@@ -102,4 +102,46 @@ TEST(steps) {
     CHECK_INT(s.n, 0);
 }
 
-TEST_MAIN(RUN(precedence); RUN(functions); RUN(variables); RUN(errors); RUN(formatting); RUN(steps))
+typedef struct { double E, F; } ef_t;
+static void setv(void *u, const char *n, double v) { ef_t *x = u; if (n[0] == 'E') x->E = v; else x->F = v; }
+static double rnd3(void *u) { (void)u; return 0.4279; }
+static double fix2(void *u, double v) { (void)u; return round(v * 100) / 100; }
+TEST(sci82ms) {
+    static const me_ctx_t GRA = {.angle = ME_ANGLE_GRAD};
+    double v;
+    /* fractions a┘b┘c and sexagesimal input */
+    CHECK_INT(me_eval("1\xE2\x94\x98" "2+1\xE2\x94\x98" "3", &RAD, &v), ME_OK); CHECK_NEAR(v, 5.0 / 6, 1e-12);
+    CHECK_INT(me_eval("2|1|4", &RAD, &v), ME_OK); CHECK_NEAR(v, 2.25, 1e-12);
+    CHECK_INT(me_eval("1|0", &RAD, &v), ME_ERR_DIV_ZERO);
+    CHECK_INT(me_eval("12\xC2\xB0" "30\xC2\xB0", &RAD, &v), ME_OK); CHECK_NEAR(v, 12.5, 1e-12);
+    CHECK_INT(me_eval("1@30@36@", &RAD, &v), ME_OK); CHECK_NEAR(v, 1.51, 1e-12);
+    /* GRAD mode and DRG suffixes */
+    CHECK_INT(me_eval("sin(100)", &GRA, &v), ME_OK); CHECK_NEAR(v, 1, 1e-12);
+    CHECK_INT(me_eval("pi}", &DEG, &v), ME_OK); CHECK_NEAR(v, 180, 1e-9);
+    CHECK_INT(me_eval("200~", &DEG, &v), ME_OK); CHECK_NEAR(v, 180, 1e-9);
+    CHECK_INT(me_eval("90{", &RAD, &v), ME_OK); CHECK_NEAR(v, 3.14159265358979 / 2, 1e-12);
+    /* infix nCr / nPr, binding tighter than multiplication */
+    CHECK_INT(me_eval("5nCr2", &RAD, &v), ME_OK); CHECK_NEAR(v, 10, 0);
+    CHECK_INT(me_eval("5 nPr 2", &RAD, &v), ME_OK); CHECK_NEAR(v, 20, 0);
+    CHECK_INT(me_eval("2*5nCr2", &RAD, &v), ME_OK); CHECK_NEAR(v, 20, 0);
+    CHECK_INT(me_eval("nCr(5,2)", &RAD, &v), ME_OK); CHECK_NEAR(v, 10, 0);
+    /* hyperbolic, cube root */
+    CHECK_INT(me_eval("cosh(0)+\xE2\x88\x9B" "27)", &RAD, &v), ME_OK); CHECK_NEAR(v, 4, 1e-12);
+    /* Pol / Rec store E and F */
+    ef_t ef = {0, 0};
+    me_ctx_t c = {.angle = ME_ANGLE_DEG, .set_var = setv, .random = rnd3, .round = fix2, .user = &ef};
+    CHECK_INT(me_eval("Pol(1,1)", &c, &v), ME_OK); CHECK_NEAR(v, sqrt(2), 1e-12); CHECK_NEAR(ef.F, 45, 1e-9);
+    CHECK_INT(me_eval("Rec(2,60)", &c, &v), ME_OK); CHECK_NEAR(v, 1, 1e-12); CHECK_NEAR(ef.F, sqrt(3), 1e-12);
+    CHECK_INT(me_eval("Pol(1)", &c, &v), ME_ERR_ARGS);
+    /* Ran# and Rnd( need hooks */
+    CHECK_INT(me_eval("Ran#", &c, &v), ME_OK); CHECK_NEAR(v, 0.427, 1e-12);
+    CHECK_INT(me_eval("Ran#", &RAD, &v), ME_ERR_UNKNOWN);
+    CHECK_INT(me_eval("Rnd(1/3)*3", &c, &v), ME_OK); CHECK_NEAR(v, 0.99, 1e-12);
+    /* steps print infix combinations */
+    steps_t s = {0}; bool tr;
+    CHECK_INT(me_solve_steps("1+5nCr2", &RAD, cb, &s, &v, &tr), ME_OK);
+    CHECK(strstr(s.exprs[0], "nCr") != NULL);
+    CHECK_NEAR(v, 11, 0);
+}
+
+TEST_MAIN(RUN(precedence); RUN(functions); RUN(variables); RUN(errors); RUN(formatting); RUN(steps); RUN(sci82ms))

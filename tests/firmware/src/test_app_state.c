@@ -54,7 +54,7 @@ TEST(normal_calculator_offline) {
     char r[32]; calc_result_text(&A.calc, r, sizeof r); CHECK_STR(r, "3");
     K(KEY_ADD); K(KEY_K1); K(KEY_EQ); calc_result_text(&A.calc, r, sizeof r); CHECK_STR(r, "4");
     K(KEY_ON); CHECK_INT(A.calc.ntok, 0); /* conventional ON */
-    K(KEY_MODE); CHECK_INT(A.set.angle_deg, 0);
+    K(KEY_MODE); K(KEY_MODE); K(KEY_K2); CHECK_INT(A.set.angle_deg, ME_ANGLE_RAD); /* MODE MODE 2 = Rad */
     app_render(&A, &FB);
 }
 
@@ -229,7 +229,8 @@ TEST(text_entry_methods_preserve_text) {
 TEST(storage_failure_is_survivable) {
     boot(false);
     kv_memory_fail_writes(KV, true);
-    K(KEY_MODE); const keycode_t e[] = {KEY_K2, KEY_ADD, KEY_K2, KEY_EQ}; keys(e, 4);
+    K(KEY_MODE); K(KEY_MODE); K(KEY_K1); /* Deg: settings write fails */
+    const keycode_t e[] = {KEY_K2, KEY_ADD, KEY_K2, KEY_EQ}; keys(e, 4);
     char r[16]; calc_result_text(&A.calc, r, sizeof r); CHECK_STR(r, "4");
     CHECK(strstr(g_logbuf, "storage_error") != NULL);
 }

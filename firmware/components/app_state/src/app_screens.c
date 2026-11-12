@@ -298,8 +298,10 @@ void screens_open_steps(app_t *a, const char *expr, bool prot)
 {
     reader_view_t *r = reader_new(ST_MATH_TOOLS, prot || app_is_protected(a));
     if (!r) return;
-    me_var_t vars[2] = {{"Ans", a->calc.ans}, {"M", a->calc.mem}};
-    me_ctx_t ctx = {a->set.angle_deg ? ME_ANGLE_DEG : ME_ANGLE_RAD, vars, 2};
+    me_var_t vars[10] = {{"Ans", a->calc.ans}};
+    static const char *const VN[9] = {"A", "B", "C", "D", "E", "F", "X", "Y", "M"};
+    for (int i = 0; i < 9; i++) vars[i + 1] = (me_var_t){VN[i], a->calc.vars[i]};
+    me_ctx_t ctx = {.angle = (me_angle_t)a->set.angle_deg, .vars = vars, .nvars = 10};
     double v;
     bool tr = false;
     doc_add(&r->doc, DOC_TITLE, "Resolucao (local)", NULL);
@@ -368,7 +370,7 @@ static void stats_submit(app_t *a, form_view_t *f)
     char buf[96];
     snprintf(buf, sizeof(buf), "%s", f->f[0].text);
     for (char *tok = strtok(buf, ",;"); tok && n < 100; tok = strtok(NULL, ",;")) {
-        me_ctx_t ctx = {ME_ANGLE_RAD, NULL, 0};
+        me_ctx_t ctx = {.angle = ME_ANGLE_RAD, .vars = NULL, .nvars = 0};
         if (me_eval(tok, &ctx, &d[n]) != ME_OK) { snprintf(f->error, sizeof(f->error), "valor invalido"); return; }
         n++;
     }
@@ -766,7 +768,7 @@ static void set_value(app_t *a, menu_view_t *m, int i, char *b, size_t l)
 {
     (void)m;
     static const char *const REP[] = {"off", "lenta", "normal", "rapida"};
-    static const char *const CMB[] = {"SSAA", "ASAS", "MMSS"};
+    static const char *const CMB[] = {"SSAA", "ASAS", "AASS"};
     settings_t *s = &a->set;
     b[0] = 0;
     switch (i) {
