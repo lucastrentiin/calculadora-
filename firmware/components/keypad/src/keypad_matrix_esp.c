@@ -17,7 +17,7 @@
 #include "keypad.h"
 #include "sdkconfig.h"
 
-static const char *TAG = "keypad";
+__attribute__((unused)) static const char *TAG = "keypad";
 
 #ifdef CONFIG_MT_KEYPAD_MATRIX
 #define MAX_LINES 12
