@@ -37,7 +37,7 @@ espessura, acabamento e quantidade — e esses já são os da versão final.
 | Quantidade | 5 (mínimo) |
 | Espessura | **0,8 mm** (perto da placa original; 1,0 mm também serve) |
 | Material | FR-4 |
-| Acabamento | **ENIG** (ouro). Obrigatório: os contatos das teclas ficam expostos e o HASL (estanho) oxida e fica irregular |
+| Acabamento | **Protótipo: HASL sem chumbo** (cotado em R$ 158 contra R$ 428 com ENIG, 5 placas). Os contatos ficam levemente ondulados e oxidam com o tempo: não tocar com os dedos, limpar com álcool isopropílico antes de montar e quando uma tecla falhar, guardar em lugar seco. **Versão final: ENIG** |
 | Cobre | 1 oz |
 | Máscara / serigrafia | verde / branca (qualquer cor) |
 | Trilha / espaço mínimos | 0,2 / 0,2 mm |
