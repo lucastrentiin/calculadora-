@@ -1,0 +1,12 @@
+node_modules/
+build/
+backend/dist/
+backend/data/devices.json
+firmware/build/
+firmware/sdkconfig
+firmware/sdkconfig.old
+firmware/managed_components/
+firmware/dependencies.lock
+*.pem
+*.key
+.env
